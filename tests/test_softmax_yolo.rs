@@ -27,7 +27,8 @@ mod cuda {
     use serial_test::serial;
     use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
+    use teeny_cuda::{device::CudaLaunchConfig, errors::Result};
+    use teeny_test::cuda as testing;
 
     const N_ROWS: usize = 2 * 20 * 20; // batch × P5 anchor grid = 800
     const N_COLS: usize = 128; // 80 COCO classes → next power of 2

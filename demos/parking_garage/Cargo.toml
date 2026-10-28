@@ -9,8 +9,11 @@ publish = false
 # Requires TEENYC_PATH, TEENYC_CACHE_DIR, and MODELS_CACHE_DIR env vars.
 cuda = [
     "dep:vision-rs",
+    "vision-rs/cuda",
     "dep:teeny-core",
     "dep:teeny-cuda",
+    "dep:teeny-test",
+    "teeny-test/cuda",
     "dep:teeny-compiler",
     "dep:teeny-cli",
     "teeny-cli/cuda",
@@ -18,6 +21,17 @@ cuda = [
     "dep:teeny-data",
     "dep:image",
     "dep:reqwest",
+    "dep:clap",
+]
+# Build with `--features riscv` to AOT-compile the server's kernels for RISC-V RVV
+# (`cargo teeny package --target riscv-rvv ...`). Inference itself still needs `cuda`.
+riscv = [
+    "dep:vision-rs",
+    "vision-rs/riscv",
+    "dep:teeny-core",
+    "dep:teeny-cli",
+    "teeny-cli/riscv",
+    "dep:teeny-kernels",
     "dep:clap",
 ]
 
@@ -37,10 +51,13 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
-# Optional CUDA inference deps (enabled by --features cuda)
-vision-rs      = { path = "../..", optional = true, default-features = false, features = ["cuda"] }
+# Optional inference/AOT deps (enabled by --features cuda or --features riscv)
+vision-rs      = { path = "../..", optional = true, default-features = false }
 teeny-core     = { workspace = true, optional = true }
 teeny-cuda     = { workspace = true, optional = true }
+# CUDA device setup helpers (`teeny_test::cuda`, formerly `teeny_cuda::testing`). Path-only:
+# teeny-test isn't published (fine here -- this demo is `publish = false`).
+teeny-test     = { path = "../../../teenygrad/testing/teeny-test", optional = true }
 teeny-compiler = { workspace = true, optional = true }
 teeny-cli      = { workspace = true, optional = true }
 teeny-kernels  = { workspace = true, optional = true }

@@ -38,6 +38,18 @@ download over a real network, so drops are expected and handled) from our
 original UFPR archive, hosted there since `inf.ufpr.br` isn't always reachable — and extracted
 automatically on first run.
 
+## RISC-V RVV (AOT only)
+
+`--features riscv` AOT-compiles the server's YOLO26n kernels for RISC-V RVV, with no CUDA toolkit
+needed. The server can't run inference on RISC-V yet, because teenygrad has no RISC-V model
+runtime. From the repo root:
+
+```bash
+cargo teeny package --target spacemit-k3 --package parking-garage \
+  --bin parking-garage-server --dest ./demos/parking_garage/dist/parking-garage-k3 \
+  --features riscv
+```
+
 ## Building and Deploying to NVIDIA Jetson (Jetson Orin Nano)
 
 This demo can be cross-compiled and deployed to a Jetson Orin Nano using the same workflow as the main vision-rs crate.

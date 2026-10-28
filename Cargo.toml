@@ -5,7 +5,9 @@ members = ["demos/parking_garage"]
 # `{ workspace = true }` instead of repeating the version number.
 [workspace.dependencies]
 teeny-core     = { version = "0.2.0", features = ["std"] }
-teeny-kernels  = "0.2.0"
+# default-features off: teeny-kernels defaults to `cuda`, which would otherwise pull the CUDA
+# toolkit into a `riscv`-only build. The `cuda`/`riscv` features below turn the backend back on.
+teeny-kernels  = { version = "0.2.0", default-features = false }
 teeny-macros   = "0.2.0"
 teeny-triton   = "0.2.0"
 teeny-data     = "0.2.0"
@@ -41,7 +43,11 @@ no-default-features = true
 
 [features]
 default = ["cuda", "training"]
-cuda = ["teeny-cuda", "teeny-compiler", "teeny-cli/cuda"]
+cuda = ["teeny-cuda", "teeny-compiler", "teeny-cli/cuda", "teeny-kernels/cuda", "teeny-test/cuda"]
+# RISC-V RVV: ahead-of-time kernel compilation (`cargo teeny aot/package --device riscv`) and
+# cross-building for riscv64gc. Inference/training still need `cuda` -- teenygrad has no RISC-V
+# model runtime yet. Build with `--no-default-features --features riscv` to avoid CUDA entirely.
+riscv = ["teeny-cli/riscv", "teeny-kernels/riscv"]
 training = ["teeny-kernels/training", "teeny-core/training"]
 
 [dependencies]
@@ -56,6 +62,10 @@ teeny-cli      = { workspace = true, optional = true }
 anyhow         = { version = "1.0", default-features = false }
 
 [dev-dependencies]
+# CUDA test helpers (`teeny_test::cuda`, formerly `teeny_cuda::testing`). Path-only: teeny-test
+# isn't published, and Cargo drops path dev-dependencies when publishing. Its `cuda` feature is
+# enabled by this crate's `cuda` feature so `--no-default-features` tests need no CUDA toolkit.
+teeny-test     = { path = "../teenygrad/testing/teeny-test" }
 serial_test    = "3"
 teeny-compiler = { workspace = true }
 dotenv         = "0.15"
@@ -80,17 +90,19 @@ serde_json     = "1"
 # [patch] entries even unused ones — unmounted unused patches cause the cross
 # build to fail. Keep this list in sync with the transitive dep graph.
 #
-# Commented out by default: all teeny-* crates are now published to
-# crates.io, and [patch] is an unconditional override (not a fallback) — with
-# it active, cargo requires ../teenygrad to exist even though the published
-# versions would resolve fine on their own. Uncomment when developing against
-# a local teenygrad checkout.
-#[patch.crates-io]
-#teeny-core     = { path = "../teenygrad/core/teeny-core" }
-#teeny-kernels  = { path = "../teenygrad/kernels/teeny-kernels" }
-#teeny-triton   = { path = "../teenygrad/kernels/teeny-triton" }
-#teeny-compiler = { path = "../teenygrad/compiler/teeny-compiler" }
-#teeny-macros   = { path = "../teenygrad/macros/teeny-macros" }
-#teeny-cuda     = { path = "../teenygrad/drivers/teeny-cuda" }
-#teeny-data     = { path = "../teenygrad/utilities/teeny-data" }
-#teeny-cli      = { path = "../teenygrad/utilities/teeny-cli" }
+# Enabled on this branch: the `riscv` feature needs teenygrad's RISC-V AOT
+# backend (teeny-cli `riscv` feature, teeny-riscv), which isn't published to
+# crates.io yet. [patch] is an unconditional override (not a fallback), so this
+# requires a ../teenygrad checkout; comment it out again once teenygrad is
+# published with RISC-V support.
+[patch.crates-io]
+teeny-core     = { path = "../teenygrad/core/teeny-core" }
+teeny-kernels  = { path = "../teenygrad/kernels/teeny-kernels" }
+teeny-triton   = { path = "../teenygrad/kernels/teeny-triton" }
+teeny-compiler = { path = "../teenygrad/compiler/teeny-compiler" }
+teeny-macros   = { path = "../teenygrad/macros/teeny-macros" }
+teeny-cuda     = { path = "../teenygrad/drivers/teeny-cuda" }
+teeny-riscv    = { path = "../teenygrad/drivers/teeny-riscv" }
+teeny-runtime  = { path = "../teenygrad/runtime/teeny-runtime" }
+teeny-data     = { path = "../teenygrad/utilities/teeny-data" }
+teeny-cli      = { path = "../teenygrad/utilities/teeny-cli" }

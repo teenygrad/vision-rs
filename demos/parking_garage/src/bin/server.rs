@@ -585,7 +585,8 @@ fn build_infer_fn(
 ) -> Result<Box<dyn FnMut(&Path) -> Result<Vec<(usize, f32, [f32; 4])>>>> {
     use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
     use teeny_core::{graph::{DtypeRepr, SymTensor}, model::LoweringMode};
-    use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef, testing};
+    use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef};
+    use teeny_test::cuda as testing;
     use teeny_kernels::graph::{Anduin, TritonLowering};
     use vision_rs::models::yolo::{
         loss::anchor::AnchorGrid,
@@ -761,12 +762,12 @@ fn build_infer_fn(
 // dataset root — see the loop's `other => eprintln!("unknown flag: ...")`
 // fallthrough). Mirrors `examples/yolo26.rs`'s `is_aot_invocation`/`run_aot`.
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn is_aot_invocation(raw_args: &[String]) -> bool {
     raw_args.iter().any(|a| a == "--device")
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn run_aot(raw_args: &[String]) -> Result<()> {
     use clap::Parser;
     use teeny_core::graph::DtypeRepr;
@@ -856,13 +857,13 @@ async fn main() -> Result<()> {
     dotenv().ok();
 
     let raw_args: Vec<String> = std::env::args().collect();
-    #[cfg(feature = "cuda")]
+    #[cfg(any(feature = "cuda", feature = "riscv"))]
     if is_aot_invocation(&raw_args) {
         return run_aot(&raw_args);
     }
-    #[cfg(not(feature = "cuda"))]
+    #[cfg(not(any(feature = "cuda", feature = "riscv")))]
     if raw_args.iter().any(|a| a == "--device") {
-        anyhow::bail!("--device (AOT compile) requires the 'cuda' feature");
+        anyhow::bail!("--device (AOT compile) requires the 'cuda' or 'riscv' feature");
     }
 
     let mut args = std::env::args().skip(1);

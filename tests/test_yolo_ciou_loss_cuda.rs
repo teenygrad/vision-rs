@@ -7,6 +7,8 @@
 // Forward outputs: [N] per-anchor CIoU loss + saved [N] iou, v, alpha.
 // Backward output: [4, N] per-anchor gradient w.r.t. pred.
 
+#![cfg(feature = "cuda")]
+
 use std::path::PathBuf;
 use dotenv::dotenv;
 use insta::assert_debug_snapshot;
@@ -16,7 +18,9 @@ use teeny_core::device::buffer::Buffer;
 use teeny_core::device::program::Kernel;
 
 #[cfg(feature = "cuda")]
-use teeny_cuda::{errors::Result, testing};
+use teeny_cuda::errors::Result;
+#[cfg(feature = "cuda")]
+use teeny_test::cuda as testing;
 
 const N:       usize = 32;
 const BLOCK_N: i32   = 32;

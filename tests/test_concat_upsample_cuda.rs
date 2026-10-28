@@ -32,7 +32,8 @@ mod cuda {
     use serial_test::serial;
     use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
+    use teeny_cuda::{device::CudaLaunchConfig, errors::Result};
+    use teeny_test::cuda as testing;
 
     // ── Dimensions ────────────────────────────────────────────────────────────
     const B:       usize = 2;

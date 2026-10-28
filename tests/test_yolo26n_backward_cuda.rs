@@ -46,11 +46,8 @@ mod cuda {
         graph::{DtypeRepr, SymTensor},
         model::LoweringMode,
     };
-    use teeny_cuda::{
-        compiler::{graph::CudaGraphCompiler, target::Target},
-        model::TensorRef,
-        testing,
-    };
+    use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef};
+    use teeny_test::cuda as testing;
     use teeny_kernels::graph::TritonLowering;
     use vision_rs::models::yolo::{
         loss::yolo26::Yolo26Loss,

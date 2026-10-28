@@ -62,6 +62,20 @@ Compiled artifacts land in `target/aarch64-unknown-linux-gnu/release/`.
   which extends the `cross` base image with `clang-12` (required by
   `bindgen` for aarch64 cross-bindings).
 
+## RISC-V RVV
+
+RISC-V boards (`riscv-rvv`, `spacemit-k3`) cross-compile to `riscv64gc-unknown-linux-gnu` with
+`cross`'s stock image, with no CUDA mount or custom Dockerfile. Turn off the default `cuda` feature:
+
+```bash
+cargo teeny build --target riscv-rvv --example yolo26 --no-default-features --features riscv,training
+# run the result locally under qemu-riscv64
+cargo teeny run --target riscv-rvv --example yolo26 --no-default-features --features riscv,training -- --help
+```
+
+Only ahead-of-time kernel compilation targets RVV. Inference still needs `cuda`, because
+teenygrad has no RISC-V model runtime yet.
+
 Once you have a cross-compiled binary, see
 [Packaging a Deployable Bundle](./packaging.md) to combine it with
 ahead-of-time-compiled kernels into something you can copy straight to the

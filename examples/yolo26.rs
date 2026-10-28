@@ -315,7 +315,7 @@ struct CocoCategory {
 // ---------------------------------------------------------------------------
 //
 // `cargo teeny aot --example yolo26 --device cuda --options "capability=sm_90,..."`
-// (see cargo-teeny) builds this example for the host and runs it with
+// (or `--features riscv --device riscv --options "capability=generic-rvv1.0"`; see cargo-teeny) builds this example for the host and runs it with
 // --device/--options/--cache-dir/--force forwarded verbatim — no subcommand
 // keyword. We detect that shape *before* the normal `Args::parse()` (which
 // requires a subcommand) so it doesn't collide with `download`/`view`/`bench`/etc.
@@ -323,12 +323,12 @@ struct CocoCategory {
 // default deployment model (YOLO26n, 640×640, nc=80/COCO) ahead of time and
 // exit, without touching the normal subcommand dispatch below.
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn is_aot_invocation(raw_args: &[String]) -> bool {
     raw_args.iter().any(|a| a == "--device")
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn run_aot(raw_args: &[String]) -> Result<()> {
     use teeny_core::graph::DtypeRepr;
     use teeny_core::model::LoweringMode;
@@ -376,13 +376,13 @@ fn main() -> Result<()> {
     dotenv().ok();
 
     let raw_args: Vec<String> = std::env::args().collect();
-    #[cfg(feature = "cuda")]
+    #[cfg(any(feature = "cuda", feature = "riscv"))]
     if is_aot_invocation(&raw_args) {
         return run_aot(&raw_args);
     }
-    #[cfg(not(feature = "cuda"))]
+    #[cfg(not(any(feature = "cuda", feature = "riscv")))]
     if raw_args.iter().any(|a| a == "--device") {
-        anyhow::bail!("--device (AOT compile) requires the 'cuda' feature");
+        anyhow::bail!("--device (AOT compile) requires the 'cuda' or 'riscv' feature");
     }
 
     let args = Args::parse();
@@ -792,11 +792,8 @@ fn run_train(
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{
-            compiler::{compile_kernel, graph::CudaGraphCompiler, target::Target},
-            model::{AdamwKernel, TensorRef},
-            testing,
-        };
+        use teeny_cuda::{compiler::{compile_kernel, graph::CudaGraphCompiler, target::Target}, model::{AdamwKernel, TensorRef}};
+        use teeny_test::cuda as testing;
         use teeny_kernels::{graph::TritonLowering, nn::optim::adam::AdamwStep};
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
@@ -1308,7 +1305,8 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
         graph::{DtypeRepr, SymTensor},
         model::LoweringMode,
     };
-    use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, testing};
+    use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
+    use teeny_test::cuda as testing;
     use teeny_kernels::graph::{Anduin, TritonLowering};
     use vision_rs::models::yolo::{
         loss::anchor::AnchorGrid,
@@ -1602,7 +1600,8 @@ fn run_verify(
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, testing};
+        use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
+        use teeny_test::cuda as testing;
         use teeny_kernels::graph::{Anduin, TritonLowering};
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
@@ -1755,7 +1754,8 @@ fn run_debug_train(
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef, testing};
+        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef};
+        use teeny_test::cuda as testing;
         use teeny_kernels::graph::TritonLowering;
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
@@ -2092,7 +2092,8 @@ fn run_debug_infer(
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef, testing};
+        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef};
+        use teeny_test::cuda as testing;
         use teeny_kernels::graph::{Anduin, TritonLowering};
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
@@ -2343,7 +2344,8 @@ fn run_validate(
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, testing};
+        use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
+        use teeny_test::cuda as testing;
         use teeny_kernels::graph::{Anduin, TritonLowering};
         use vision_rs::models::yolo::{
             loss::anchor::AnchorGrid,
@@ -2909,7 +2911,8 @@ fn run_bench(
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, testing};
+        use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
+        use teeny_test::cuda as testing;
         use teeny_kernels::graph::{Anduin, TritonLowering};
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
