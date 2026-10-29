@@ -402,14 +402,18 @@ fn parse_timestamp(filename: &str) -> String {
     format!("{date}T{hh}:{mm}:{ss}Z")
 }
 
-// ── CUDA inference (requires --features cuda) ──────────────────────────────
+// ── Inference (requires --features cuda or --features riscv) ───────────────
+//
+// `cuda` replays the Anduin-optimised graph as a CUDA graph. `riscv` (without `cuda`) runs the
+// same graph kernel-by-kernel through `teeny_test::model::RuntimeModel`, launching the RISC-V
+// kernels natively when built for a riscv64 board.
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 const VEHICLE_CLASSES: &[usize] = &[2, 5, 7]; // COCO: car, bus, truck
 
 
 // Letterbox-resize image to img_size × img_size, normalise to [0,1], return NCHW f32.
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn preprocess_image_raw(img: &image::RgbImage, img_size: usize) -> Vec<f32> {
     let (orig_w, orig_h) = (img.width() as usize, img.height() as usize);
     let scale = img_size as f64 / orig_w.max(orig_h) as f64;
@@ -434,7 +438,7 @@ fn preprocess_image_raw(img: &image::RgbImage, img_size: usize) -> Vec<f32> {
 }
 
 // IoU of two CxCyWH normalised boxes.
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn box_iou_cxcywh(a: [f32; 4], b: [f32; 4]) -> f32 {
     let ax1 = a[0] - a[2] * 0.5; let ax2 = a[0] + a[2] * 0.5;
     let ay1 = a[1] - a[3] * 0.5; let ay2 = a[1] + a[3] * 0.5;
@@ -447,12 +451,12 @@ fn box_iou_cxcywh(a: [f32; 4], b: [f32; 4]) -> f32 {
 }
 
 /// Base URL for pre-converted YOLO26 safetensors weights on Hugging Face.
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 const HF_YOLO26_BASE_URL: &str =
     "https://huggingface.co/datasets/teenygrad/ultralytics-yolo26/resolve/main/ultralytics/yolo26";
 
 /// Download a single file from `url` to `dest`.
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 async fn download_weights(url: &str, dest: &Path) -> Result<()> {
     use futures_util::StreamExt;
     use tokio::io::AsyncWriteExt;
@@ -476,20 +480,45 @@ async fn download_weights(url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-// Load safetensors weights into a compiled CUDA model.
-// Handles BatchNorm folding required by Conv2dBnSilu fused nodes.
+// A compiled model whose named parameters can be uploaded: the CUDA `LoadedModel` or the
+// device-generic `RuntimeModel`, which expose the same two methods.
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+trait ParamStore {
+    fn named_params(&self) -> Vec<(String, usize, usize)>;
+    fn upload(&mut self, node_idx: usize, param_idx: usize, data: &[f32]) -> Result<()>;
+}
+
 #[cfg(feature = "cuda")]
-fn load_weights_for_model(
-    model: &mut teeny_cuda::model::LoadedModel,
-    path: &Path,
-) -> Result<()> {
+impl ParamStore for teeny_cuda::model::LoadedModel {
+    fn named_params(&self) -> Vec<(String, usize, usize)> {
+        self.param_info_named().collect()
+    }
+    fn upload(&mut self, node_idx: usize, param_idx: usize, data: &[f32]) -> Result<()> {
+        self.load_param_f32(node_idx, param_idx, data)
+    }
+}
+
+#[cfg(all(feature = "riscv", not(feature = "cuda")))]
+impl ParamStore for teeny_test::model::RuntimeModel<'_> {
+    fn named_params(&self) -> Vec<(String, usize, usize)> {
+        self.param_info_named().collect()
+    }
+    fn upload(&mut self, node_idx: usize, param_idx: usize, data: &[f32]) -> Result<()> {
+        self.load_param_f32(node_idx, param_idx, data)
+    }
+}
+
+// Load safetensors weights into a compiled model.
+// Handles BatchNorm folding required by Conv2dBnSilu fused nodes.
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+fn load_weights_for_model(model: &mut impl ParamStore, path: &Path) -> Result<()> {
     use teeny_data::safetensors::SafeTensors;
 
     let st = SafeTensors::from_pretrained(path)
         .with_context(|| format!("opening {}", path.display()))?;
     let tensors = st.tensors().context("deserialising safetensors header")?;
 
-    let named_params: Vec<(String, usize, usize)> = model.param_info_named().collect();
+    let named_params: Vec<(String, usize, usize)> = model.named_params();
     if named_params.is_empty() {
         println!("warning: 0 named params — optimise() may have dropped node names; weights not loaded");
         return Ok(());
@@ -513,7 +542,7 @@ fn load_weights_for_model(
                 (Ok(gamma), Ok(var)) => {
                     let eps = 1e-3f32;
                     let v: Vec<f32> = gamma.iter().zip(var.iter()).map(|(&g, &v)| g / (v + eps).sqrt()).collect();
-                    model.load_param_f32(*node_idx, *param_idx, &v)
+                    model.upload(*node_idx, *param_idx, &v)
                         .with_context(|| format!("uploading bn_scale '{key}'"))?;
                     loaded += 1;
                 }
@@ -535,7 +564,7 @@ fn load_weights_for_model(
                     let v: Vec<f32> = beta.iter().zip(gamma.iter()).zip(mean.iter()).zip(var.iter())
                         .map(|(((&b, &g), &m), &vv)| b - (g / (vv + eps).sqrt()) * m)
                         .collect();
-                    model.load_param_f32(*node_idx, *param_idx, &v)
+                    model.upload(*node_idx, *param_idx, &v)
                         .with_context(|| format!("uploading bn_shift '{key}'"))?;
                     loaded += 1;
                 }
@@ -558,7 +587,7 @@ fn load_weights_for_model(
                 anyhow::ensure!(bytes.len() % 4 == 0, "tensor '{key}': not f32");
                 let data: Vec<f32> = bytes.chunks_exact(4)
                     .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-                model.load_param_f32(*node_idx, *param_idx, &data)
+                model.upload(*node_idx, *param_idx, &data)
                     .with_context(|| format!("uploading '{key}'"))?;
                 loaded += 1;
             }
@@ -578,16 +607,12 @@ fn load_weights_for_model(
 // Build and return an inference closure for the given model spec.
 // The closure takes an image path and returns COCO detections:
 //   Vec<(class_id, score, [cx_norm, cy_norm, w_norm, h_norm])>
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn build_infer_fn(
     model_spec: &str,
     img_size: usize,
 ) -> Result<Box<dyn FnMut(&Path) -> Result<Vec<(usize, f32, [f32; 4])>>>> {
-    use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
-    use teeny_core::{graph::{DtypeRepr, SymTensor}, model::LoweringMode};
-    use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef};
-    use teeny_test::cuda as testing;
-    use teeny_kernels::graph::{Anduin, TritonLowering};
+    use teeny_core::graph::{DtypeRepr, SymTensor};
     use vision_rs::models::yolo::{
         loss::anchor::AnchorGrid,
         yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26},
@@ -625,13 +650,6 @@ fn build_infer_fn(
         })?;
     }
 
-    let env = testing::setup_cuda_env()?;
-    let target = Target::new(env.capability);
-    let device = &env.device;
-
-    let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".into());
-    let kern_cache = teeny_compiler::compiler::default_cache_dir();
-
     println!("compiling YOLO26{} (nc={nc}, {img_size}×{img_size}) — first run builds kernel cache …",
         format!("{variant:?}").to_uppercase());
 
@@ -646,17 +664,7 @@ fn build_infer_fn(
     // afterward without issue, so do the same here (faster + fewer DAG nodes).
     let graph_to_compile = graph_rc.borrow().clone();
 
-    let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
-    let graph_cmp = CudaGraphCompiler::new(compiler);
-    let lowering = TritonLowering::new().with_optimizer(Anduin);
-    let cuda_model =
-        graph_cmp.compile_model(&graph_to_compile, &lowering, &target, LoweringMode::Inference, false)?;
-    println!("compiled {} DAG nodes", cuda_model.dag.len());
-
-    let mut model = cuda_model.load(device, 1)?;
-    println!("loading weights from {} …", st_path.display());
-    load_weights_for_model(&mut model, &st_path)?;
-    println!("model ready\n");
+    let mut run_model = compile_model(&graph_to_compile, &st_path, img_size)?;
 
     let grid = AnchorGrid::yolo26(img_size, img_size);
     let a = grid.n_anchors;
@@ -673,23 +681,16 @@ fn build_infer_fn(
     let anchor_scale: Vec<(usize, usize)> = a_per_scale.iter().enumerate()
         .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j))).collect();
 
-    let terminals = model.terminal_node_indices_sorted_by_size();
-    anyhow::ensure!(terminals.len() >= 2, "model must have 2 terminal nodes");
-    let (boxes_tidx, scores_tidx) = (terminals[0], terminals[1]);
-
     let grid_cx = grid.cx;
     let grid_cy = grid.cy;
     let grid_strides = grid.strides;
 
-    let graph_model = model.capture_graph(device, 1, &[vec![1, 3, img_size, img_size]], &[boxes_tidx, scores_tidx])?;
-
     let f = move |path: &Path| -> Result<Vec<(usize, f32, [f32; 4])>> {
-        let _ = (&env, &model);
         let img = image::open(path).with_context(|| format!("opening {:?}", path))?.to_rgb8();
         let (orig_w, orig_h) = (img.width() as usize, img.height() as usize);
         let pixels = preprocess_image_raw(&img, img_size);
 
-        let outputs = graph_model.run(&[pixels.as_slice()])?;
+        let outputs = run_model(&pixels)?;
         let ltrb = &outputs[0];
         let logits = &outputs[1];
 
@@ -753,6 +754,129 @@ fn build_infer_fn(
     };
 
     Ok(Box::new(f))
+}
+
+/// Runs one forward pass on a 1×3×H×W input, returning the `[boxes, scores]` outputs.
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+type RunModelFn = Box<dyn FnMut(&[f32]) -> Result<Vec<Vec<f32>>>>;
+
+/// The two detection-head outputs, as the two smallest terminal nodes: (boxes, scores).
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+fn box_score_terminals(terminals: &[usize]) -> Result<(usize, usize)> {
+    anyhow::ensure!(terminals.len() >= 2, "model must have 2 terminal nodes");
+    Ok((terminals[0], terminals[1]))
+}
+
+/// CUDA: compiles the Anduin-optimised graph, loads weights, and captures it as a CUDA graph.
+#[cfg(feature = "cuda")]
+fn compile_model(
+    graph: &teeny_core::graph::Graph,
+    st_path: &Path,
+    img_size: usize,
+) -> Result<RunModelFn> {
+    use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
+    use teeny_core::model::LoweringMode;
+    use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
+    use teeny_test::cuda as testing;
+    use teeny_kernels::graph::{Anduin, TritonLowering};
+
+    let env = testing::setup_cuda_env()?;
+    let target = Target::new(env.capability);
+
+    let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".into());
+    let kern_cache = teeny_compiler::compiler::default_cache_dir();
+
+    let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+    let graph_cmp = CudaGraphCompiler::new(compiler);
+    let lowering = TritonLowering::new().with_optimizer(Anduin);
+    let cuda_model =
+        graph_cmp.compile_model(graph, &lowering, &target, LoweringMode::Inference, false)?;
+    println!("compiled {} DAG nodes", cuda_model.dag.len());
+
+    let mut model = cuda_model.load(&env.device, 1)?;
+    println!("loading weights from {} …", st_path.display());
+    load_weights_for_model(&mut model, st_path)?;
+    println!("model ready\n");
+
+    let (boxes_tidx, scores_tidx) = box_score_terminals(&model.terminal_node_indices_sorted_by_size())?;
+    let graph_model = model.capture_graph(&env.device, 1, &[vec![1, 3, img_size, img_size]], &[boxes_tidx, scores_tidx])?;
+
+    Ok(Box::new(move |input: &[f32]| {
+        let _ = (&env, &model);
+        graph_model.run(&[input])
+    }))
+}
+
+/// RISC-V: compiles the graph kernel-by-kernel through `RuntimeModel`, whose kernels a riscv64
+/// build launches natively, and loads weights. Uses the same lowering as `cargo teeny package`'s
+/// AOT step (`run_aot`), so a packaged board finds every kernel in its `cache/`.
+#[cfg(all(feature = "riscv", not(feature = "cuda")))]
+fn compile_model(
+    graph: &teeny_core::graph::Graph,
+    st_path: &Path,
+    _img_size: usize,
+) -> Result<RunModelFn> {
+    use teeny_core::compiler::Target as _;
+    use teeny_core::model::LoweringMode;
+    use teeny_kernels::graph::{Anduin, GraphOptimizer, TritonLowering};
+    use teeny_test::model::{RuntimeModel, runtime};
+
+    let device = runtime::open()?;
+    let target = riscv_target(&device)?;
+    println!("backend: {} (target {})", runtime::BACKEND_NAME,
+        target.target_cpu().unwrap_or_default());
+
+    let graph = Anduin.optimize(graph)?;
+    let mut model = RuntimeModel::compile(
+        &device, &graph, &TritonLowering::new(), LoweringMode::Inference, &target, 1, false,
+    )?;
+    println!("compiled {} DAG nodes", model.len());
+
+    println!("loading weights from {} …", st_path.display());
+    load_weights_for_model(&mut model, st_path)?;
+    println!("model ready\n");
+
+    let (boxes_tidx, scores_tidx) =
+        box_score_terminals(&model.terminal_node_indices_sorted_by_size())?;
+    Ok(Box::new(move |input: &[f32]| {
+        model.run(&device, &[input], &[boxes_tidx, scores_tidx])
+    }))
+}
+
+/// The RISC-V chip to compile/look up kernels for: `TEENYC_CAPABILITY` if set, else the
+/// `capability=` that `cargo teeny package` recorded in the bundle's `conf/` (so a packaged
+/// server finds the kernels AOT-compiled into its `cache/` without extra setup), else
+/// `teeny-runtime`'s default.
+#[cfg(all(feature = "riscv", not(feature = "cuda")))]
+fn riscv_target(
+    device: &teeny_test::model::runtime::Device<'_>,
+) -> Result<teeny_test::model::runtime::Target> {
+    use teeny_riscv::compiler::target::Capability;
+    use teeny_test::model::runtime;
+
+    if std::env::var_os("TEENYC_CAPABILITY").is_some() {
+        return runtime::default_target(device);
+    }
+    let conf = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.parent()?.join("conf/.cargo-teeny-package")));
+    let packaged = conf
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("OPTIONS="))
+                .and_then(|opts| {
+                    opts.split(',').find_map(|kv| kv.trim().strip_prefix("capability="))
+                })
+                .map(str::to_owned)
+        });
+    match packaged {
+        Some(cap) => {
+            let capability: Capability = cap.parse().map_err(|e: String| anyhow::anyhow!(e))?;
+            Ok(runtime::Target::new(capability))
+        }
+        None => runtime::default_target(device),
+    }
 }
 
 // ── AOT kernel compile (`cargo teeny aot`/`package --device ...`) ──────────
@@ -897,9 +1021,9 @@ async fn main() -> Result<()> {
     let mut lots = scan_lots(Path::new(&root))?;
     println!("\nfound {} lot(s) — ticking every {}s\n", lots.len(), TICK_SECS);
 
-    // ── CUDA inference setup (no-op without --features cuda) ──────────────
+    // ── Inference setup (no-op without --features cuda or riscv) ──────────
 
-    #[cfg(feature = "cuda")]
+    #[cfg(any(feature = "cuda", feature = "riscv"))]
     let mut infer_fn: Option<Box<dyn FnMut(&Path) -> Result<Vec<(usize, f32, [f32; 4])>>>> = {
         if let Some(ref spec) = model_spec {
             println!("setting up inference for model '{spec}' …");
@@ -909,9 +1033,9 @@ async fn main() -> Result<()> {
         }
     };
 
-    #[cfg(not(feature = "cuda"))]
+    #[cfg(not(any(feature = "cuda", feature = "riscv")))]
     if model_spec.is_some() {
-        anyhow::bail!("--model requires compiling with --features cuda");
+        anyhow::bail!("--model requires compiling with --features cuda or --features riscv");
     }
 
     // ── Axum HTTP / WebSocket server ───────────────────────────────────────
@@ -968,9 +1092,9 @@ async fn main() -> Result<()> {
             let total = spaces.len();
             let gt_occ = spaces.iter().filter(|s| s.occupied).count();
 
-            // ── Inference (cuda feature) ───────────────────────────────────
+            // ── Inference (cuda/riscv feature) ─────────────────────────────
             let inf_info: Option<(usize, f32)>;
-            #[cfg(feature = "cuda")]
+            #[cfg(any(feature = "cuda", feature = "riscv"))]
             {
                 inf_info = if let Some(ref mut infer) = infer_fn {
                     let t0 = std::time::Instant::now();
@@ -1003,7 +1127,7 @@ async fn main() -> Result<()> {
                     None
                 };
             }
-            #[cfg(not(feature = "cuda"))]
+            #[cfg(not(any(feature = "cuda", feature = "riscv")))]
             { inf_info = None; }
 
             // ── Log ────────────────────────────────────────────────────────

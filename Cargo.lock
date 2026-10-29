@@ -3999,6 +3999,7 @@ dependencies = [
  "teeny-cuda",
  "teeny-data",
  "teeny-kernels",
+ "teeny-riscv",
  "teeny-test",
  "tokio",
  "tower-http",

@@ -23,15 +23,22 @@ cuda = [
     "dep:reqwest",
     "dep:clap",
 ]
-# Build with `--features riscv` to AOT-compile the server's kernels for RISC-V RVV
-# (`cargo teeny package --target riscv-rvv ...`). Inference itself still needs `cuda`.
+# Build with `--features riscv` (and no `cuda`) for RISC-V RVV: AOT-compiles the server's kernels
+# (`cargo teeny package --target spacemit-k3 ...`) and runs inference through teeny-test's
+# `RuntimeModel`, launching kernels natively on a riscv64 board.
 riscv = [
     "dep:vision-rs",
     "vision-rs/riscv",
     "dep:teeny-core",
+    "dep:teeny-riscv",
+    "dep:teeny-test",
+    "teeny-test/riscv",
     "dep:teeny-cli",
     "teeny-cli/riscv",
     "dep:teeny-kernels",
+    "dep:teeny-data",
+    "dep:image",
+    "dep:reqwest",
     "dep:clap",
 ]
 
@@ -55,6 +62,9 @@ tracing-subscriber = "0.3"
 vision-rs      = { path = "../..", optional = true, default-features = false }
 teeny-core     = { workspace = true, optional = true }
 teeny-cuda     = { workspace = true, optional = true }
+# RISC-V chip identifiers (`Capability`), to pick the packaged kernels' target. Resolved to
+# ../teenygrad by the workspace's [patch.crates-io].
+teeny-riscv    = { version = "0.2", optional = true }
 # CUDA device setup helpers (`teeny_test::cuda`, formerly `teeny_cuda::testing`). Path-only:
 # teeny-test isn't published (fine here -- this demo is `publish = false`).
 teeny-test     = { path = "../../../teenygrad/testing/teeny-test", optional = true }
