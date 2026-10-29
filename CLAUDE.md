@@ -112,6 +112,21 @@ TEENYC_CAPABILITY=spacemit-k3 ./target/riscv/release/examples/yolo26 validate \
 `--dump-outputs` writes each image's raw `boxes`/`scores` tensors as little-endian f32 for an
 element-wise diff; `--trace` prints per-node launch times.
 
+#### On a RISC-V board (SpacemiT K3, ssh alias `jupiter2`)
+
+A `riscv64` build launches kernels natively, in-process, across every core (`TEENY_RISCV_THREADS`
+overrides), with no qemu. `scripts/riscv-board-validate.sh` cross-compiles the example for
+`riscv64gc-unknown-linux-gnu`, builds the kernel cache here by running that binary on one image
+under qemu-user (teenyc is x86-only; the cache is keyed on kernel source + target cpu, so it is
+host-independent), then rsyncs binary + cache + weights + the first N val2017 images to the board
+and runs there with teenyc disabled. The board needs only glibc >= 2.39.
+
+```bash
+source .env
+scripts/riscv-board-validate.sh -n 50 -H jupiter2      # outputs in target/riscv64-native/validate
+python3 scripts/diff_outputs.py /tmp/cuda-50 target/riscv64-native/validate/board
+```
+
 ## Architecture
 
 The library is a single crate (`src/lib.rs` as the root). As modules are added, they should be declared here and organized under `src/` as either inline modules or separate files.
