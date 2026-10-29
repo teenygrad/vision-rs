@@ -2895,10 +2895,10 @@ fn validate_cuda_graph_infer(
     let env = testing::setup_cuda_env()?;
     let target = Target::new(env.capability);
 
-    // `find_teenyc` honours TEENYC_PATH, else the toolchain `cargo teeny install-toolchain` set up.
-    let teenyc_path = teeny_compiler::compiler::find_teenyc()?;
+    // teenyc (TEENYC_PATH, else the toolchain `cargo teeny install-toolchain` set up) is only
+    // looked up for kernels missing from the cache.
     let kern_cache = teeny_compiler::compiler::default_cache_dir();
-    let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+    let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
     let lowering = TritonLowering::new().with_optimizer(Anduin);
     let cuda_model = CudaGraphCompiler::new(compiler).compile_model(
         graph,
