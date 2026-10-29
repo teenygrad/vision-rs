@@ -47,7 +47,10 @@ cuda = ["teeny-cuda", "teeny-compiler", "teeny-cli/cuda", "teeny-kernels/cuda", 
 # RISC-V RVV: ahead-of-time kernel compilation (`cargo teeny aot/package --device riscv`) and
 # cross-building for riscv64gc. Inference/training still need `cuda` -- teenygrad has no RISC-V
 # model runtime yet. Build with `--no-default-features --features riscv` to avoid CUDA entirely.
-riscv = ["teeny-cli/riscv", "teeny-kernels/riscv"]
+riscv = ["teeny-cli/riscv", "teeny-kernels/riscv", "teeny-test/riscv"]
+# RISC-V plus running kernels under qemu-riscv64 (needs qemu-user and gcc-riscv64-linux-gnu):
+# `validate --runtime runtime` built with `--no-default-features --features qemu`.
+qemu = ["riscv", "teeny-test/qemu"]
 training = ["teeny-kernels/training", "teeny-core/training"]
 
 [dependencies]

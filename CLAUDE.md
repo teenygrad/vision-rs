@@ -89,6 +89,29 @@ source .env
 python3 ../vision-rs-utils/bench.py
 ```
 
+### Cross-backend accuracy check (CUDA vs RISC-V under qemu)
+
+`validate --runtime runtime` runs the unoptimised graph kernel-by-kernel through
+`teeny_test::model::RuntimeModel` on whichever `teeny-runtime` backend the binary was built
+for, so CUDA and RISC-V can be compared like for like (`--runtime cuda-graph`, the default, is
+the CUDA-only fast path). RISC-V runs under `qemu-riscv64` (needs `qemu-user` and
+`gcc-riscv64-linux-gnu`) at roughly 2.5 min per image; build it into a separate target dir so
+it doesn't clobber the CUDA build. `TEENYC_CAPABILITY` selects the RISC-V target.
+
+```bash
+source .env
+cargo build --release --example yolo26 --features cuda
+CARGO_TARGET_DIR=target/riscv cargo build --release --example yolo26 --no-default-features --features qemu
+
+./target/release/examples/yolo26 validate --model ultralytics/yolo26n -b 1 --limit 50 \
+  --runtime runtime --dump-outputs /tmp/cuda-50
+TEENYC_CAPABILITY=spacemit-k3 ./target/riscv/release/examples/yolo26 validate \
+  --model ultralytics/yolo26n -b 1 --limit 50 --runtime runtime --dump-outputs /tmp/riscv-50
+```
+
+`--dump-outputs` writes each image's raw `boxes`/`scores` tensors as little-endian f32 for an
+element-wise diff; `--trace` prints per-node launch times.
+
 ## Architecture
 
 The library is a single crate (`src/lib.rs` as the root). As modules are added, they should be declared here and organized under `src/` as either inline modules or separate files.

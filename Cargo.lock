@@ -5521,6 +5521,8 @@ dependencies = [
  "anyhow",
  "teeny-core",
  "teeny-cuda",
+ "teeny-riscv",
+ "teeny-runtime",
  "thiserror 2.0.20",
 ]
 
