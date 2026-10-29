@@ -257,7 +257,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -268,7 +268,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -439,7 +439,7 @@ version = "0.38.0+1.3.281"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bb44936d800fea8f016d7f2311c6a4f97aebd5dc86f09906139ec848cf3a46f"
 dependencies = [
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -1155,7 +1155,7 @@ checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -1676,7 +1676,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -1967,7 +1967,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2340,7 +2340,7 @@ dependencies = [
  "glutin_egl_sys",
  "glutin_glx_sys",
  "glutin_wgl_sys",
- "libloading",
+ "libloading 0.8.9",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
@@ -2515,7 +2515,7 @@ dependencies = [
  "bitflags 2.13.1",
  "com",
  "libc",
- "libloading",
+ "libloading 0.8.9",
  "thiserror 1.0.69",
  "widestring",
  "winapi",
@@ -2682,7 +2682,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.58.0",
 ]
 
 [[package]]
@@ -3035,7 +3035,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
 dependencies = [
  "libc",
- "libloading",
+ "libloading 0.8.9",
  "pkg-config",
 ]
 
@@ -3135,6 +3135,16 @@ name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
+name = "libloading"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
 dependencies = [
  "cfg-if",
  "windows-link",
@@ -3508,7 +3518,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3989,6 +3999,8 @@ dependencies = [
  "teeny-cuda",
  "teeny-data",
  "teeny-kernels",
+ "teeny-riscv",
+ "teeny-test",
  "tokio",
  "tower-http",
  "tracing",
@@ -4380,7 +4392,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4764,7 +4776,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4821,7 +4833,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5254,7 +5266,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5389,24 +5401,21 @@ dependencies = [
 
 [[package]]
 name = "teeny-cli"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c676c9f6d2d203964e85642923f51df4758de8fc5df219c941e68fabc9a7a7f6"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
  "teeny-core",
  "teeny-cuda",
  "teeny-kernels",
+ "teeny-riscv",
  "teeny-vision",
  "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "teeny-compiler"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6458d0c4e4f388b2a4403904e268e7b03232c4d3244bdcbe6a458bdb4f80fba"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -5418,16 +5427,13 @@ dependencies = [
  "syn 2.0.119",
  "teeny-core",
  "teeny-triton",
- "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
 ]
 
 [[package]]
 name = "teeny-core"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a05af902be19c0542366056a8422e30e8c07b8ad9a6fa8f40200014558db21f2"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "sha2",
@@ -5436,9 +5442,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-cuda"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1e16fb1f5eb43506b9261226fe7760d5e1ba9a115147d54811c62f5bc50d977"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "bindgen",
@@ -5447,13 +5451,13 @@ dependencies = [
  "teeny-compiler",
  "teeny-core",
  "thiserror 2.0.20",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "teeny-data"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "995fcc1f0c220fb70f153c178f0ce7a7ab6f4a0f56eee03f6cb6adbc1dd670c0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "csv",
@@ -5468,23 +5472,20 @@ dependencies = [
 
 [[package]]
 name = "teeny-kernels"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59375c5bed6655246f53ce5d47c7a306fadd1b465bf7e0b15282d73ce1329067"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "teeny-core",
  "teeny-cuda",
  "teeny-macros",
+ "teeny-runtime",
  "teeny-triton",
  "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "teeny-macros"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0eaec9b5b99ed4d7d5dc8598320955d4612c596e058a2d872b2b3cfe94fda819"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5492,10 +5493,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "teeny-riscv"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "libloading 0.9.0",
+ "teeny-compiler",
+ "teeny-core",
+ "thiserror 2.0.20",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "teeny-runtime"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "teeny-core",
+ "teeny-cuda",
+ "teeny-riscv",
+]
+
+[[package]]
+name = "teeny-test"
+version = "0.2.1"
+dependencies = [
+ "anyhow",
+ "teeny-core",
+ "teeny-cuda",
+ "teeny-riscv",
+ "teeny-runtime",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "teeny-triton"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "473077d3849b9d0f853ebe47dfce31493ffe6a6c0f70f1ddfbb8cb89b47fd871"
+version = "0.2.1"
 dependencies = [
  "cargo_metadata",
  "teeny-core",
@@ -5504,9 +5538,7 @@ dependencies = [
 
 [[package]]
 name = "teeny-vision"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2ad37d97b88704ee3ff9db5d71aef16d20b8cacefff418ec203c82ec1edf5f5"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "arrow-array",
@@ -5526,7 +5558,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6001,7 +6033,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6116,6 +6148,7 @@ dependencies = [
  "teeny-data",
  "teeny-kernels",
  "teeny-macros",
+ "teeny-test",
  "teeny-triton",
  "tokio",
  "toml",
@@ -6480,7 +6513,7 @@ dependencies = [
  "js-sys",
  "khronos-egl",
  "libc",
- "libloading",
+ "libloading 0.8.9",
  "log",
  "metal",
  "naga",
@@ -6539,7 +6572,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6583,24 +6616,11 @@ version = "0.58.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ba6d44ec8c2591c134257ce647b7ea6b20335bf6379a27dac5f1641fcf59f99"
 dependencies = [
- "windows-implement 0.58.0",
- "windows-interface 0.58.0",
+ "windows-implement",
+ "windows-interface",
  "windows-result 0.2.0",
  "windows-strings 0.1.0",
  "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-core"
-version = "0.62.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
-dependencies = [
- "windows-implement 0.60.2",
- "windows-interface 0.59.3",
- "windows-link",
- "windows-result 0.4.1",
- "windows-strings 0.5.1",
 ]
 
 [[package]]
@@ -6615,32 +6635,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "windows-implement"
-version = "0.60.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "windows-interface"
 version = "0.58.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "053c4c462dc91d3b1504c6fe5a726dd15e216ba718e84a0e46a88fbe5ded3515"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "windows-interface"
-version = "0.59.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6968,7 +6966,7 @@ dependencies = [
  "as-raw-xcb-connection",
  "gethostname",
  "libc",
- "libloading",
+ "libloading 0.8.9",
  "once_cell",
  "rustix 1.1.4",
  "x11rb-protocol",

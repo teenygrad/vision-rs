@@ -9,11 +9,32 @@ publish = false
 # Requires TEENYC_PATH, TEENYC_CACHE_DIR, and MODELS_CACHE_DIR env vars.
 cuda = [
     "dep:vision-rs",
+    "vision-rs/cuda",
     "dep:teeny-core",
     "dep:teeny-cuda",
+    "dep:teeny-test",
+    "teeny-test/cuda",
     "dep:teeny-compiler",
     "dep:teeny-cli",
     "teeny-cli/cuda",
+    "dep:teeny-kernels",
+    "dep:teeny-data",
+    "dep:image",
+    "dep:reqwest",
+    "dep:clap",
+]
+# Build with `--features riscv` (and no `cuda`) for RISC-V RVV: AOT-compiles the server's kernels
+# (`cargo teeny package --target spacemit-k3 ...`) and runs inference through teeny-test's
+# `RuntimeModel`, launching kernels natively on a riscv64 board.
+riscv = [
+    "dep:vision-rs",
+    "vision-rs/riscv",
+    "dep:teeny-core",
+    "dep:teeny-riscv",
+    "dep:teeny-test",
+    "teeny-test/riscv",
+    "dep:teeny-cli",
+    "teeny-cli/riscv",
     "dep:teeny-kernels",
     "dep:teeny-data",
     "dep:image",
@@ -37,10 +58,16 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 
-# Optional CUDA inference deps (enabled by --features cuda)
-vision-rs      = { path = "../..", optional = true, default-features = false, features = ["cuda"] }
+# Optional inference/AOT deps (enabled by --features cuda or --features riscv)
+vision-rs      = { path = "../..", optional = true, default-features = false }
 teeny-core     = { workspace = true, optional = true }
 teeny-cuda     = { workspace = true, optional = true }
+# RISC-V chip identifiers (`Capability`), to pick the packaged kernels' target. Resolved to
+# ../teenygrad by the workspace's [patch.crates-io].
+teeny-riscv    = { version = "0.2", optional = true }
+# CUDA device setup helpers (`teeny_test::cuda`, formerly `teeny_cuda::testing`). Path-only:
+# teeny-test isn't published (fine here -- this demo is `publish = false`).
+teeny-test     = { path = "../../../teenygrad/testing/teeny-test", optional = true }
 teeny-compiler = { workspace = true, optional = true }
 teeny-cli      = { workspace = true, optional = true }
 teeny-kernels  = { workspace = true, optional = true }

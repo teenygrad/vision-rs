@@ -7,6 +7,8 @@
 // Forward output:  [N] per-anchor BCE loss summed over C classes.
 // Backward output: [C, N] per-element gradient w.r.t. pred logits.
 
+#![cfg(feature = "cuda")]
+
 use std::path::PathBuf;
 use dotenv::dotenv;
 use insta::assert_debug_snapshot;
@@ -16,7 +18,9 @@ use teeny_core::device::buffer::Buffer;
 use teeny_core::device::program::Kernel;
 
 #[cfg(feature = "cuda")]
-use teeny_cuda::{errors::Result, testing};
+use teeny_cuda::errors::Result;
+#[cfg(feature = "cuda")]
+use teeny_test::cuda as testing;
 
 const N:       usize = 32;
 const C:       usize = 80;

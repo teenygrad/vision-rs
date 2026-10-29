@@ -89,6 +89,44 @@ source .env
 python3 ../vision-rs-utils/bench.py
 ```
 
+### Cross-backend accuracy check (CUDA vs RISC-V under qemu)
+
+`validate --runtime runtime` runs the unoptimised graph kernel-by-kernel through
+`teeny_test::model::RuntimeModel` on whichever `teeny-runtime` backend the binary was built
+for, so CUDA and RISC-V can be compared like for like (`--runtime cuda-graph`, the default, is
+the CUDA-only fast path). RISC-V runs under `qemu-riscv64` (needs `qemu-user` and
+`gcc-riscv64-linux-gnu`) at roughly 2.5 min per image; build it into a separate target dir so
+it doesn't clobber the CUDA build. `TEENYC_CAPABILITY` selects the RISC-V target.
+
+```bash
+source .env
+cargo build --release --example yolo26 --features cuda
+CARGO_TARGET_DIR=target/riscv cargo build --release --example yolo26 --no-default-features --features qemu
+
+./target/release/examples/yolo26 validate --model ultralytics/yolo26n -b 1 --limit 50 \
+  --runtime runtime --dump-outputs /tmp/cuda-50
+TEENYC_CAPABILITY=spacemit-k3 ./target/riscv/release/examples/yolo26 validate \
+  --model ultralytics/yolo26n -b 1 --limit 50 --runtime runtime --dump-outputs /tmp/riscv-50
+```
+
+`--dump-outputs` writes each image's raw `boxes`/`scores` tensors as little-endian f32 for an
+element-wise diff; `--trace` prints per-node launch times.
+
+#### On a RISC-V board (SpacemiT K3, ssh alias `jupiter2`)
+
+A `riscv64` build launches kernels natively, in-process, across every core (`TEENY_RISCV_THREADS`
+overrides), with no qemu. `scripts/riscv-board-validate.sh` cross-compiles the example for
+`riscv64gc-unknown-linux-gnu`, builds the kernel cache here by running that binary on one image
+under qemu-user (teenyc is x86-only; the cache is keyed on kernel source + target cpu, so it is
+host-independent), then rsyncs binary + cache + weights + the first N val2017 images to the board
+and runs there with teenyc disabled. The board needs only glibc >= 2.39.
+
+```bash
+source .env
+scripts/riscv-board-validate.sh -n 50 -H jupiter2      # outputs in target/riscv64-native/validate
+python3 scripts/diff_outputs.py /tmp/cuda-50 target/riscv64-native/validate/board
+```
+
 ## Architecture
 
 The library is a single crate (`src/lib.rs` as the root). As modules are added, they should be declared here and organized under `src/` as either inline modules or separate files.

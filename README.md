@@ -13,7 +13,9 @@ A high-performance computer vision SDK for Rust.
   ```
 
 - **CUDA Toolkit 13.3 or later** on the host (for the `cuda` feature — on by default — and for
-  ahead-of-time kernel compilation via the custom `teenyc` compiler; see below). Check with:
+  ahead-of-time kernel compilation via the custom `teenyc` compiler; see below). Not needed for
+  a RISC-V-only build (`--no-default-features --features riscv`; see
+  [RISC-V RVV](#risc-v-rvv)). Check with:
 
   ```bash
   nvcc --version
@@ -182,6 +184,33 @@ cargo teeny package \
   on the device — see `teeny_compiler::compiler::default_cache_dir()`), so it uses the
   pre-compiled kernels instead of trying to JIT-compile (which would fail: there's no `teenyc` on
   the Jetson).
+
+## RISC-V RVV
+
+The `riscv` feature compiles YOLO26's kernels ahead of time for RISC-V cores with the RVV 1.0
+vector extension, and cross-builds the crate for `riscv64gc-unknown-linux-gnu`. Build it with
+`--no-default-features` to leave out CUDA entirely; no CUDA toolkit is needed. Inference,
+training and benchmarking still need `cuda`, because teenygrad has no RISC-V model runtime yet.
+
+RISC-V support isn't on crates.io yet, so this branch enables `[patch.crates-io]` against a
+sibling `../teenygrad` checkout.
+
+```bash
+# Ahead-of-time compile the kernels (on the host) for a SpacemiT K3
+cargo teeny aot --example yolo26 --no-default-features --features riscv,training \
+  --device riscv --options "capability=spacemit-k3"
+
+# Cross-build (stock `cross` riscv64gc image) and smoke-test under qemu-riscv64
+cargo teeny build --target riscv-rvv --example yolo26 --no-default-features --features riscv,training
+cargo teeny run --target riscv-rvv --example yolo26 --no-default-features --features riscv,training -- --help
+
+# Both in one bundle; --device/--options default from the board profile
+cargo teeny package --target spacemit-k3 --example yolo26 --dest ./dist/yolo26-k3 \
+  --no-default-features --features riscv,training
+```
+
+`capability` is one of `generic-rvv1.0`, `spacemit-k1` or `spacemit-k3`. The `riscv-rvv` board
+profile uses `generic-rvv1.0`.
 
 ## Deploying to the Orin
 

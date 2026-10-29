@@ -71,14 +71,25 @@ mod cuda_impl {
     use teeny_core::device::{Device, buffer::Buffer};
     use teeny_cuda::{
         compiler::{compile_kernel, target::Capability, target::Target},
-        device::CudaDevice,
+        device::{CudaDevice, CudaLaunchConfig, program::CudaProgram},
         errors::Result,
-        testing,
     };
     use crate::models::yolo::kernels::loss::{
         ciou::{YoloCiouLossBackward, YoloCiouLossForward},
         cls::YoloBceClsLossBackward,
     };
+
+    /// One CTA per `grid_x`, with block/cluster dims from the compiled kernel's metadata.
+    fn launch_config_with_grid<K: teeny_core::device::program::Kernel>(
+        grid_x: usize,
+        program: &CudaProgram<'_, K>,
+    ) -> CudaLaunchConfig {
+        CudaLaunchConfig {
+            grid: [grid_x as u32, 1, 1],
+            block: [program.threads_per_block().max(1), 1, 1],
+            cluster: [program.num_ctas().max(1), 1, 1],
+        }
+    }
 
     /// CUDA training loss for YOLO26: computes d_boxes and d_scores.
     pub struct Yolo26Loss {
@@ -125,9 +136,9 @@ mod cuda_impl {
             let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::<f32>::new(bn), &target, true, false)?)?;
             let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::<f32>::new(bn), &target, true, false)?)?;
             let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::<f32>::new(bn), &target, true, false)?)?;
-            let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward<f32>>(&ciou_fwd_ptx)?;
-            let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward<f32>>(&ciou_bwd_ptx)?;
-            let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward<f32>>(&cls_bwd_ptx)?;
+            let prog_ciou_fwd = CudaProgram::<YoloCiouLossForward<f32>>::try_from_ptx(&ciou_fwd_ptx)?;
+            let prog_ciou_bwd = CudaProgram::<YoloCiouLossBackward<f32>>::try_from_ptx(&ciou_bwd_ptx)?;
+            let prog_cls_bwd  = CudaProgram::<YoloBceClsLossBackward<f32>>::try_from_ptx(&cls_bwd_ptx)?;
             self.compute_grads_for_head(
                 device, &prog_ciou_fwd, &prog_ciou_bwd, &prog_cls_bwd,
                 &self.assigner, boxes, scores, gt_boxes_b, gt_cls_b, 1.0,
@@ -163,9 +174,9 @@ mod cuda_impl {
             let ciou_fwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossForward::<f32>::new(bn), &target, true, false)?)?;
             let ciou_bwd_ptx = std::fs::read(compile_kernel(&YoloCiouLossBackward::<f32>::new(bn), &target, true, false)?)?;
             let cls_bwd_ptx  = std::fs::read(compile_kernel(&YoloBceClsLossBackward::<f32>::new(bn), &target, true, false)?)?;
-            let prog_ciou_fwd = testing::load_program_from_ptx::<YoloCiouLossForward<f32>>(&ciou_fwd_ptx)?;
-            let prog_ciou_bwd = testing::load_program_from_ptx::<YoloCiouLossBackward<f32>>(&ciou_bwd_ptx)?;
-            let prog_cls_bwd  = testing::load_program_from_ptx::<YoloBceClsLossBackward<f32>>(&cls_bwd_ptx)?;
+            let prog_ciou_fwd = CudaProgram::<YoloCiouLossForward<f32>>::try_from_ptx(&ciou_fwd_ptx)?;
+            let prog_ciou_bwd = CudaProgram::<YoloCiouLossBackward<f32>>::try_from_ptx(&ciou_bwd_ptx)?;
+            let prog_cls_bwd  = CudaProgram::<YoloBceClsLossBackward<f32>>::try_from_ptx(&cls_bwd_ptx)?;
 
             let (d_boxes_o2m, d_scores_o2m) = self.compute_grads_for_head(
                 device, &prog_ciou_fwd, &prog_ciou_bwd, &prog_cls_bwd,
@@ -301,14 +312,14 @@ mod cuda_impl {
             let alpha_buf  = device.buffer::<f32>(n)?;
             pred_buf.to_device(pred)?;
             target_buf.to_device(target)?;
-            let cfg = testing::launch_config_with_grid(n.div_ceil(self.block_n as usize), prog);
+            let cfg = launch_config_with_grid(n.div_ceil(self.block_n as usize), prog);
             device.launch(prog, &cfg, (
-                pred_buf.as_device_ptr()   as *mut f32,
-                target_buf.as_device_ptr() as *mut f32,
-                loss_buf.as_device_ptr()   as *mut f32,
-                iou_buf.as_device_ptr()    as *mut f32,
-                v_buf.as_device_ptr()      as *mut f32,
-                alpha_buf.as_device_ptr()  as *mut f32,
+                pred_buf.as_device_ptr(),
+                target_buf.as_device_ptr(),
+                loss_buf.as_device_ptr(),
+                iou_buf.as_device_ptr(),
+                v_buf.as_device_ptr(),
+                alpha_buf.as_device_ptr(),
                 n as i32,
             ))?;
             let (mut iou, mut v, mut alpha) = (vec![0.0f32; n], vec![0.0f32; n], vec![0.0f32; n]);
@@ -334,15 +345,15 @@ mod cuda_impl {
             let d_pred_buf     = device.buffer::<f32>(4 * n)?;
             dy_buf.to_device(dy)?; pred_buf.to_device(pred)?; target_buf.to_device(target)?;
             iou_buf.to_device(iou)?; v_buf.to_device(v)?; alpha_buf.to_device(alpha)?;
-            let cfg = testing::launch_config_with_grid(n.div_ceil(self.block_n as usize), prog);
+            let cfg = launch_config_with_grid(n.div_ceil(self.block_n as usize), prog);
             device.launch(prog, &cfg, (
-                dy_buf.as_device_ptr()     as *mut f32,
-                pred_buf.as_device_ptr()   as *mut f32,
-                target_buf.as_device_ptr() as *mut f32,
-                iou_buf.as_device_ptr()    as *mut f32,
-                v_buf.as_device_ptr()      as *mut f32,
-                alpha_buf.as_device_ptr()  as *mut f32,
-                d_pred_buf.as_device_ptr() as *mut f32,
+                dy_buf.as_device_ptr(),
+                pred_buf.as_device_ptr(),
+                target_buf.as_device_ptr(),
+                iou_buf.as_device_ptr(),
+                v_buf.as_device_ptr(),
+                alpha_buf.as_device_ptr(),
+                d_pred_buf.as_device_ptr(),
                 n as i32,
             ))?;
             let mut out = vec![0.0f32; 4 * n];
@@ -362,12 +373,12 @@ mod cuda_impl {
             let mut target_buf = device.buffer::<f32>(c * n)?;
             let d_pred_buf     = device.buffer::<f32>(c * n)?;
             dy_buf.to_device(dy)?; pred_buf.to_device(pred)?; target_buf.to_device(target)?;
-            let cfg = testing::launch_config_with_grid(n.div_ceil(self.block_n as usize), prog);
+            let cfg = launch_config_with_grid(n.div_ceil(self.block_n as usize), prog);
             device.launch(prog, &cfg, (
-                dy_buf.as_device_ptr()     as *mut f32,
-                pred_buf.as_device_ptr()   as *mut f32,
-                target_buf.as_device_ptr() as *mut f32,
-                d_pred_buf.as_device_ptr() as *mut f32,
+                dy_buf.as_device_ptr(),
+                pred_buf.as_device_ptr(),
+                target_buf.as_device_ptr(),
+                d_pred_buf.as_device_ptr(),
                 n as i32,
                 c as i32,
             ))?;

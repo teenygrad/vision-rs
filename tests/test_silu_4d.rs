@@ -21,7 +21,8 @@ mod cuda {
     use serial_test::serial;
     use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{errors::Result, testing};
+    use teeny_cuda::errors::Result;
+    use teeny_test::cuda as testing;
 
     // Shape: (N=2, C=8, H=16, W=16) stored as a flat contiguous f32 buffer.
     const N: usize = 2 * 8 * 16 * 16; // 4096

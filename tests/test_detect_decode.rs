@@ -3,6 +3,8 @@
 // Converts raw LTRB box predictions to XYWH world coordinates.
 // B=2, A=16, BLOCK_A=16.
 
+#![cfg(feature = "cuda")]
+
 use std::path::PathBuf;
 use dotenv::dotenv;
 use insta::assert_debug_snapshot;
@@ -12,7 +14,9 @@ use teeny_core::device::buffer::Buffer;
 use teeny_core::device::program::Kernel;
 
 #[cfg(feature = "cuda")]
-use teeny_cuda::{errors::Result, testing};
+use teeny_cuda::errors::Result;
+#[cfg(feature = "cuda")]
+use teeny_test::cuda as testing;
 
 const B:       usize = 2;
 const A:       usize = 16;

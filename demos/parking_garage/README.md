@@ -38,6 +38,43 @@ download over a real network, so drops are expected and handled) from our
 original UFPR archive, hosted there since `inf.ufpr.br` isn't always reachable — and extracted
 automatically on first run.
 
+## RISC-V RVV (SpacemiT K3)
+
+`--features riscv` (without `cuda`) runs inference on RISC-V: the server compiles the YOLO26n
+graph kernel-by-kernel through teeny-test's `RuntimeModel`, and a riscv64 build launches the
+kernels natively across every core (`TEENY_RISCV_THREADS` overrides). `cargo teeny package`
+cross-compiles both binaries and AOT-compiles the kernels into the bundle's `cache/`, so the
+board needs no `teenyc`. The server reads the kernels' target (`capability=spacemit-k3`) from
+the bundle's `conf/`, and `TEENYC_CAPABILITY` overrides it. From the repo root:
+
+```bash
+source .env
+cargo teeny package --target spacemit-k3 --package parking-garage \
+  --bin parking-garage-server --bin parking-garage-webapp \
+  --dest ./demos/parking_garage/dist/parking-garage-k3 \
+  --no-default-features --features riscv
+cargo teeny deploy --package ./demos/parking_garage/dist/parking-garage-k3 \
+  --host jupiter2 --dest /home/<user>/parking-garage-demo --overwrite
+```
+
+On the board, run each binary in its own session:
+
+```bash
+cd ~/parking-garage-demo
+MODELS_CACHE_DIR=$PWD/data/models DATASETS_CACHE_DIR=$PWD/data/datasets \
+  ./bin/parking-garage-server --model ultralytics/yolo26n
+./bin/parking-garage-webapp
+```
+
+Every kernel comes from `cache/`, so the board needs no `teenyc` or `rustup`: `teenyc` is only
+looked up for a kernel missing from the cache, which then fails with a "kernel not cached" error.
+
+With `--model`, the webapp shows inference time per image (last, mean, std dev, max) over every
+image since the server started; the server also logs them per image.
+
+The weights (~10MB) and the PKLot dataset (~4.6GB) are downloaded into `data/` on first run
+unless you copy them there first.
+
 ## Building and Deploying to NVIDIA Jetson (Jetson Orin Nano)
 
 This demo can be cross-compiled and deployed to a Jetson Orin Nano using the same workflow as the main vision-rs crate.
