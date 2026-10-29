@@ -61,10 +61,17 @@ On the board, run each binary in its own session:
 
 ```bash
 cd ~/parking-garage-demo
-MODELS_CACHE_DIR=$PWD/data/models DATASETS_CACHE_DIR=$PWD/data/datasets \
+TEENYC_PATH=/nonexistent/teenyc MODELS_CACHE_DIR=$PWD/data/models DATASETS_CACHE_DIR=$PWD/data/datasets \
   ./bin/parking-garage-server --model ultralytics/yolo26n
 ./bin/parking-garage-webapp
 ```
+
+`TEENYC_PATH` must be set even though every kernel comes from `cache/`: the kernel compiler looks
+for `teenyc` (via `rustup`) before checking the cache, and the board has neither. A dummy path is
+enough, and makes a cache miss fail with a clear "kernel not cached" error.
+
+With `--model`, the webapp shows inference time per image (last, mean, std dev, max) over every
+image since the server started; the server also logs them per image.
 
 The weights (~10MB) and the PKLot dataset (~4.6GB) are downloaded into `data/` on first run
 unless you copy them there first.

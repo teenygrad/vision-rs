@@ -48,7 +48,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use dotenv::dotenv;
 use futures_util::{SinkExt, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
-use parking_garage::{ParkingLotSnapshot, SpaceInfo};
+use parking_garage::{InferenceStats, ParkingLotSnapshot, SpaceInfo};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::net::TcpListener;
@@ -1061,6 +1061,8 @@ async fn main() -> Result<()> {
     // ── Iteration loop ─────────────────────────────────────────────────────
 
     let mut ticker = interval(Duration::from_secs(TICK_SECS));
+    // Every image's inference time since startup, across all lots (one model serves them all).
+    let mut inference_stats: Option<InferenceStats> = None;
 
     loop {
         ticker.tick().await;
@@ -1132,9 +1134,12 @@ async fn main() -> Result<()> {
 
             // ── Log ────────────────────────────────────────────────────────
             if let Some((inf_occ, lat_ms)) = inf_info {
+                let stats = inference_stats.get_or_insert_with(InferenceStats::default);
+                stats.record(f64::from(lat_ms));
                 println!(
-                    "[{:>8}] {}  gt={}/{} inf={}/{} {:.1}ms",
-                    lot.name, img.filename, gt_occ, total, inf_occ, total, lat_ms
+                    "[{:>8}] {}  gt={}/{} inf={}/{} {:.1}ms  (n={} mean={:.1} std={:.1} max={:.1}ms)",
+                    lot.name, img.filename, gt_occ, total, inf_occ, total, lat_ms,
+                    stats.count, stats.mean_ms, stats.std_ms, stats.max_ms
                 );
             } else {
                 println!(
@@ -1155,6 +1160,7 @@ async fn main() -> Result<()> {
                 total_spaces: total,
                 occupied_ids,
                 spaces: ws_spaces,
+                inference: inference_stats.clone(),
             };
             let json = serde_json::to_string(&snapshot).expect("serialisation failed");
             let _ = tx.send(json);
