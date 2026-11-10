@@ -93,7 +93,7 @@ This demo can be cross-compiled and deployed to a Jetson Orin Nano using the sam
 On your x86 host machine, ensure `cargo-teeny` and `cross` are installed and the proper target is added:
 
 ```bash
-cargo install --git https://github.com/teenygrad/cargo-teeny
+cargo install cargo-teeny
 cargo install cross --git https://github.com/cross-rs/cross
 rustup target add aarch64-unknown-linux-gnu
 ```

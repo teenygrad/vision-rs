@@ -44,7 +44,7 @@ the `teeny` compiler fork from source for this.
 1. **Install `cargo-teeny`**:
 
    ```bash
-   cargo install --git https://github.com/teenygrad/cargo-teeny
+   cargo install cargo-teeny
    ```
 
 2. **Install the `teenyc` toolchain**:
