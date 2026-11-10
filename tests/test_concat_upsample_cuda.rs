@@ -64,7 +64,9 @@ mod cuda {
         );
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -113,8 +115,8 @@ mod cuda {
             &program,
             &cfg,
             (
-                x0_buf.as_device_ptr() as *mut f32,
-                y_buf.as_device_ptr() as *mut f32,
+                x0_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
                 CHUNK_C0_NC,
                 C_TOTAL_NC,
                 0i32,
@@ -132,8 +134,8 @@ mod cuda {
             &program,
             &cfg1,
             (
-                x1_buf.as_device_ptr() as *mut f32,
-                y_buf.as_device_ptr() as *mut f32,
+                x1_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
                 CHUNK_C1_NC,
                 C_TOTAL_NC,
                 CHUNK_C0_NC,
@@ -194,8 +196,8 @@ mod cuda {
             &program,
             &cfg,
             (
-                dy_buf.as_device_ptr() as *mut f32,
-                dx0_buf.as_device_ptr() as *mut f32,
+                dy_buf.as_device_ptr(),
+                dx0_buf.as_device_ptr(),
                 CHUNK_C0_NC,
                 C_TOTAL_NC,
                 0i32,
@@ -205,8 +207,8 @@ mod cuda {
             &program,
             &cfg,
             (
-                dy_buf.as_device_ptr() as *mut f32,
-                dx1_buf.as_device_ptr() as *mut f32,
+                dy_buf.as_device_ptr(),
+                dx1_buf.as_device_ptr(),
                 CHUNK_C1_NC,
                 C_TOTAL_NC,
                 CHUNK_C0_NC,
@@ -274,8 +276,8 @@ mod cuda {
             &program,
             &cfg,
             (
-                x_buf.as_device_ptr() as *mut f32,
-                y_buf.as_device_ptr() as *mut f32,
+                x_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
                 B as i32,
                 C_UP as i32,
                 H as i32,
@@ -337,8 +339,8 @@ mod cuda {
             &program,
             &cfg,
             (
-                dy_buf.as_device_ptr() as *mut f32,
-                dx_buf.as_device_ptr() as *mut f32,
+                dy_buf.as_device_ptr(),
+                dx_buf.as_device_ptr(),
                 B as i32,
                 C_UP as i32,
                 H as i32,

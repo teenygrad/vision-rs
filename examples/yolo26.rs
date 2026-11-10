@@ -26,6 +26,14 @@
 //!   cargo run --example yolo26 -- verify   --model ultralytics/yolo26n \
 //!       --dataset assets/datasets/coco128.toml
 
+// Without `cuda`, the train/eval/bench/verify subcommands compile to stubs that report CUDA is
+// required, so the helpers only they use (dataset loading, preprocessing, parameter init, mAP
+// matching) go unused. Allow that rather than gating each helper behind its own cfg.
+#![cfg_attr(
+    not(feature = "cuda"),
+    allow(dead_code, unused_variables, unreachable_code)
+)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -707,10 +715,11 @@ impl eframe::App for ViewApp {
                 ui.label("Go to:");
                 let resp =
                     ui.add(egui::TextEdit::singleline(&mut self.jump_buf).desired_width(56.0));
-                if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if let Ok(n) = self.jump_buf.trim().parse::<usize>() {
-                        self.jump(n);
-                    }
+                if resp.lost_focus()
+                    && ctx.input(|i| i.key_pressed(egui::Key::Enter))
+                    && let Ok(n) = self.jump_buf.trim().parse::<usize>()
+                {
+                    self.jump(n);
                 }
 
                 ui.separator();
@@ -752,7 +761,7 @@ impl eframe::App for ViewApp {
                     painter.rect_stroke(
                         det_rect,
                         0.0,
-                        egui::Stroke::new(3.5, egui::Color32::BLACK),
+                        egui::Stroke::new(3.5_f32, egui::Color32::BLACK),
                     );
 
                     let label = self.classes.get(cls_id).map(|s| s.as_str()).unwrap_or("?");
@@ -781,28 +790,10 @@ impl eframe::App for ViewApp {
 }
 
 // ---------------------------------------------------------------------------
-// Color palette — golden-angle hue step, full saturation / value
-// ---------------------------------------------------------------------------
-
-fn class_color(class_id: usize) -> egui::Color32 {
-    let hue = (class_id as f32 * 137.508) % 360.0;
-    let h = hue / 60.0;
-    let x = 1.0 - (h % 2.0 - 1.0).abs();
-    let (r, g, b) = match h as u32 {
-        0 => (1.0_f32, x, 0.0),
-        1 => (x, 1.0, 0.0),
-        2 => (0.0, 1.0, x),
-        3 => (0.0, x, 1.0),
-        4 => (x, 0.0, 1.0),
-        _ => (1.0, 0.0, x),
-    };
-    egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
-}
-
-// ---------------------------------------------------------------------------
 // Training
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)] // mirrors the `train` subcommand's flags one to one
 fn run_train(
     dataset: PathBuf,
     img_size: usize,
@@ -970,7 +961,9 @@ fn run_train(
             );
             let bytes = std::fs::read(ckpt_params.as_ref().unwrap())?;
             let saved: Vec<f32> = bytes
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                 .collect();
             let mut cursor = 0usize;
@@ -2067,10 +2060,10 @@ fn run_debug_train(
         let mut global_sq_sum = 0.0f64;
 
         for (name, node_idx, param_idx) in &named {
-            if let Some(ref f) = param_filter {
-                if !name.contains(f.as_str()) {
-                    continue;
-                }
+            if let Some(ref f) = param_filter
+                && !name.contains(f.as_str())
+            {
+                continue;
             }
 
             let shape = shape_map
@@ -2629,11 +2622,7 @@ fn run_validate(
             // Pad last (short) batch with the last real image.
             let mut input_data = Vec::with_capacity(batch_size * 3 * img_size * img_size);
             for i in 0..batch_size {
-                let src = if i < n_real {
-                    &batch_pixels[i]
-                } else {
-                    &last_pixels
-                };
+                let src = batch_pixels.get(i).unwrap_or(&last_pixels);
                 input_data.extend_from_slice(src);
             }
 
@@ -2991,7 +2980,7 @@ fn validate_runtime_infer(
 ///   - `Some(true)`  — TP at threshold `ti`
 ///   - `Some(false)` — FP at threshold `ti`
 ///   - `None`        — ignored (overlaps a crowd GT at IoU >= threshold, and was not matched
-///                     to a non-crowd GT at that threshold)
+///     to a non-crowd GT at that threshold)
 ///
 /// Matching is greedy, independent per threshold — matching the COCO evaluation protocol.
 /// Crowd ignore is applied only to unmatched predictions (per pycocotools semantics).
@@ -3215,8 +3204,8 @@ fn run_bench(
         let sep = "─".repeat(72);
         println!("{sep}");
         println!(
-            "{:<6}  {:>14}  {:>14}  {:>14}  {}",
-            "Batch", "Throughput", "Latency", "GPU kernel", "mAP@0.5"
+            "{:<6}  {:>14}  {:>14}  {:>14}  mAP@0.5",
+            "Batch", "Throughput", "Latency", "GPU kernel"
         );
         println!(
             "{:<6}  {:>14}  {:>14}  {:>14}",
@@ -3292,6 +3281,7 @@ fn run_bench(
 
 /// Run mAP@0.5 evaluation and return the scalar score.
 #[cfg(feature = "cuda")]
+#[allow(clippy::too_many_arguments)] // the model, its validation set and the decode indices
 fn evaluate_map_score(
     model: &mut teeny_cuda::model::LoadedModel,
     device: &teeny_cuda::device::CudaDevice<'_>,
@@ -3575,7 +3565,9 @@ fn load_weights_from_safetensors(
         let bytes = tv.data();
         anyhow::ensure!(bytes.len() % 4 == 0, "tensor '{}' not f32", key);
         Ok(bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect())
     };
@@ -3665,7 +3657,9 @@ fn load_weights_from_safetensors(
                     bytes.len()
                 );
                 let data: Vec<f32> = bytes
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                     .collect();
                 model
@@ -3701,6 +3695,7 @@ fn load_weights_from_safetensors(
 
 /// Run mAP@0.5 evaluation on a set of validation images.
 #[cfg(feature = "cuda")]
+#[allow(clippy::too_many_arguments)] // the model and its validation set
 fn evaluate_map(
     model: &mut teeny_cuda::model::LoadedModel,
     device: &teeny_cuda::device::CudaDevice<'_>,

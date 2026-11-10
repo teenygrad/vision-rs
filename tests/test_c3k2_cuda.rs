@@ -82,7 +82,9 @@ mod cuda {
         );
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -246,9 +248,9 @@ mod cuda {
                 cluster: [1, 1, 1],
             },
             (
-                x_buf.as_device_ptr() as *mut f32,
-                cv1_cw_buf.as_device_ptr() as *mut f32,
-                y_cv1_nchw.as_device_ptr() as *mut f32,
+                x_buf.as_device_ptr(),
+                cv1_cw_buf.as_device_ptr(),
+                y_cv1_nchw.as_device_ptr(),
                 BATCH as i32,
                 C_IN as i32,
                 (2 * C) as i32,
@@ -281,12 +283,12 @@ mod cuda {
             &bn_prog,
             &bn_cfg(2 * C),
             (
-                cv1_nc_buf.as_device_ptr() as *mut f32,
-                cv1_bn_out.as_device_ptr() as *mut f32,
-                cv1_bnw_buf.as_device_ptr() as *mut f32,
-                cv1_bnb_buf.as_device_ptr() as *mut f32,
-                cv1_bnrm.as_device_ptr() as *mut f32,
-                cv1_bnrv.as_device_ptr() as *mut f32,
+                cv1_nc_buf.as_device_ptr(),
+                cv1_bn_out.as_device_ptr(),
+                cv1_bnw_buf.as_device_ptr(),
+                cv1_bnb_buf.as_device_ptr(),
+                cv1_bnrm.as_device_ptr(),
+                cv1_bnrv.as_device_ptr(),
                 N_SPATIAL as i32,
                 (2 * C) as i32,
                 BN_EPS,
@@ -298,8 +300,8 @@ mod cuda {
             &silu_prog,
             &testing::launch_config(N_CV1, BLOCK_SILU),
             (
-                cv1_bn_out.as_device_ptr() as *mut f32,
-                cv1_silu.as_device_ptr() as *mut f32,
+                cv1_bn_out.as_device_ptr(),
+                cv1_silu.as_device_ptr(),
                 N_CV1 as i32,
             ),
         )?;
@@ -312,8 +314,8 @@ mod cuda {
             &chunk_prog,
             &ch_cfg,
             (
-                cv1_silu.as_device_ptr() as *mut f32,
-                y0_buf.as_device_ptr() as *mut f32,
+                cv1_silu.as_device_ptr(),
+                y0_buf.as_device_ptr(),
                 (2 * C) as i32,
                 C as i32,
                 0i32,
@@ -323,8 +325,8 @@ mod cuda {
             &chunk_prog,
             &ch_cfg,
             (
-                cv1_silu.as_device_ptr() as *mut f32,
-                y1_buf.as_device_ptr() as *mut f32,
+                cv1_silu.as_device_ptr(),
+                y1_buf.as_device_ptr(),
                 (2 * C) as i32,
                 C as i32,
                 C as i32,
@@ -352,9 +354,9 @@ mod cuda {
                 cluster: [1, 1, 1],
             },
             (
-                y1_nchw_buf.as_device_ptr() as *mut f32,
-                m0cw1_buf.as_device_ptr() as *mut f32,
-                y_m0cv1_nchw.as_device_ptr() as *mut f32,
+                y1_nchw_buf.as_device_ptr(),
+                m0cw1_buf.as_device_ptr(),
+                y_m0cv1_nchw.as_device_ptr(),
                 BATCH as i32,
                 C as i32,
                 C_INNER as i32,
@@ -387,12 +389,12 @@ mod cuda {
             &bn_prog,
             &bn_cfg(C_INNER),
             (
-                m0cv1_nc_buf.as_device_ptr() as *mut f32,
-                m0cv1_bn_out.as_device_ptr() as *mut f32,
-                m0cv1_bnw.as_device_ptr() as *mut f32,
-                m0cv1_bnb.as_device_ptr() as *mut f32,
-                m0cv1_bnrm.as_device_ptr() as *mut f32,
-                m0cv1_bnrv.as_device_ptr() as *mut f32,
+                m0cv1_nc_buf.as_device_ptr(),
+                m0cv1_bn_out.as_device_ptr(),
+                m0cv1_bnw.as_device_ptr(),
+                m0cv1_bnb.as_device_ptr(),
+                m0cv1_bnrm.as_device_ptr(),
+                m0cv1_bnrv.as_device_ptr(),
                 N_SPATIAL as i32,
                 C_INNER as i32,
                 BN_EPS,
@@ -404,8 +406,8 @@ mod cuda {
             &silu_prog,
             &testing::launch_config(N_M0CV1, BLOCK_SILU),
             (
-                m0cv1_bn_out.as_device_ptr() as *mut f32,
-                m0cv1_silu.as_device_ptr() as *mut f32,
+                m0cv1_bn_out.as_device_ptr(),
+                m0cv1_silu.as_device_ptr(),
                 N_M0CV1 as i32,
             ),
         )?;
@@ -430,9 +432,9 @@ mod cuda {
                 cluster: [1, 1, 1],
             },
             (
-                m0cv1_silu_nchw_buf.as_device_ptr() as *mut f32,
-                m0cw2_buf.as_device_ptr() as *mut f32,
-                y_m0cv2_nchw.as_device_ptr() as *mut f32,
+                m0cv1_silu_nchw_buf.as_device_ptr(),
+                m0cw2_buf.as_device_ptr(),
+                y_m0cv2_nchw.as_device_ptr(),
                 BATCH as i32,
                 C_INNER as i32,
                 C as i32,
@@ -465,12 +467,12 @@ mod cuda {
             &bn_prog,
             &bn_cfg(C),
             (
-                m0cv2_nc_buf.as_device_ptr() as *mut f32,
-                m0cv2_bn_out.as_device_ptr() as *mut f32,
-                m0cv2_bnw.as_device_ptr() as *mut f32,
-                m0cv2_bnb.as_device_ptr() as *mut f32,
-                m0cv2_bnrm.as_device_ptr() as *mut f32,
-                m0cv2_bnrv.as_device_ptr() as *mut f32,
+                m0cv2_nc_buf.as_device_ptr(),
+                m0cv2_bn_out.as_device_ptr(),
+                m0cv2_bnw.as_device_ptr(),
+                m0cv2_bnb.as_device_ptr(),
+                m0cv2_bnrm.as_device_ptr(),
+                m0cv2_bnrv.as_device_ptr(),
                 N_SPATIAL as i32,
                 C as i32,
                 BN_EPS,
@@ -482,8 +484,8 @@ mod cuda {
             &silu_prog,
             &testing::launch_config(N_M0CV2, BLOCK_SILU),
             (
-                m0cv2_bn_out.as_device_ptr() as *mut f32,
-                m0cv2_silu.as_device_ptr() as *mut f32,
+                m0cv2_bn_out.as_device_ptr(),
+                m0cv2_silu.as_device_ptr(),
                 N_M0CV2 as i32,
             ),
         )?;
@@ -496,8 +498,8 @@ mod cuda {
             &cat_prog,
             &ch_cfg,
             (
-                y0_buf.as_device_ptr() as *mut f32,
-                cat_buf.as_device_ptr() as *mut f32,
+                y0_buf.as_device_ptr(),
+                cat_buf.as_device_ptr(),
                 C as i32,
                 C_CAT as i32,
                 0i32, // y0 → ch [0, 16)
@@ -507,8 +509,8 @@ mod cuda {
             &cat_prog,
             &ch_cfg,
             (
-                y1_buf.as_device_ptr() as *mut f32,
-                cat_buf.as_device_ptr() as *mut f32,
+                y1_buf.as_device_ptr(),
+                cat_buf.as_device_ptr(),
                 C as i32,
                 C_CAT as i32,
                 C as i32, // y1 → ch [16, 32)
@@ -518,8 +520,8 @@ mod cuda {
             &cat_prog,
             &ch_cfg,
             (
-                m0cv2_silu.as_device_ptr() as *mut f32,
-                cat_buf.as_device_ptr() as *mut f32,
+                m0cv2_silu.as_device_ptr(),
+                cat_buf.as_device_ptr(),
                 C as i32,
                 C_CAT as i32,
                 (2 * C) as i32, // m0_out → ch [32, 48)
@@ -546,9 +548,9 @@ mod cuda {
                 cluster: [1, 1, 1],
             },
             (
-                cat_nchw_buf.as_device_ptr() as *mut f32,
-                cv2_cw_buf.as_device_ptr() as *mut f32,
-                y_cv2_nchw.as_device_ptr() as *mut f32,
+                cat_nchw_buf.as_device_ptr(),
+                cv2_cw_buf.as_device_ptr(),
+                y_cv2_nchw.as_device_ptr(),
                 BATCH as i32,
                 C_CAT as i32,
                 C_OUT as i32,
@@ -581,12 +583,12 @@ mod cuda {
             &bn_prog,
             &bn_cfg(C_OUT),
             (
-                cv2_nc_buf.as_device_ptr() as *mut f32,
-                cv2_bn_out.as_device_ptr() as *mut f32,
-                cv2_bnw_buf.as_device_ptr() as *mut f32,
-                cv2_bnb_buf.as_device_ptr() as *mut f32,
-                cv2_bnrm.as_device_ptr() as *mut f32,
-                cv2_bnrv.as_device_ptr() as *mut f32,
+                cv2_nc_buf.as_device_ptr(),
+                cv2_bn_out.as_device_ptr(),
+                cv2_bnw_buf.as_device_ptr(),
+                cv2_bnb_buf.as_device_ptr(),
+                cv2_bnrm.as_device_ptr(),
+                cv2_bnrv.as_device_ptr(),
                 N_SPATIAL as i32,
                 C_OUT as i32,
                 BN_EPS,
@@ -598,8 +600,8 @@ mod cuda {
             &silu_prog,
             &testing::launch_config(N_CV2, BLOCK_SILU),
             (
-                cv2_bn_out.as_device_ptr() as *mut f32,
-                cv2_silu.as_device_ptr() as *mut f32,
+                cv2_bn_out.as_device_ptr(),
+                cv2_silu.as_device_ptr(),
                 N_CV2 as i32,
             ),
         )?;

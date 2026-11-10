@@ -127,40 +127,40 @@ fn parse_xml_spaces(xml: &str) -> Result<Vec<Space>> {
 
         // Fallback: derive AABB from rotatedRect using the angle so the box
         // is correct even for heavily-angled spaces (side rows of the lot).
-        if xs.is_empty() {
-            if let Some(rr) = node.children().find(|n| n.has_tag_name("rotatedRect")) {
-                let cx = rr
-                    .children()
-                    .find(|n| n.has_tag_name("center"))
-                    .and_then(|c| c.attribute("x").and_then(|v| v.parse::<f64>().ok()))
-                    .unwrap_or(0.0);
-                let cy = rr
-                    .children()
-                    .find(|n| n.has_tag_name("center"))
-                    .and_then(|c| c.attribute("y").and_then(|v| v.parse::<f64>().ok()))
-                    .unwrap_or(0.0);
-                let w = rr
-                    .children()
-                    .find(|n| n.has_tag_name("size"))
-                    .and_then(|s| s.attribute("w").and_then(|v| v.parse::<f64>().ok()))
-                    .unwrap_or(0.0);
-                let h = rr
-                    .children()
-                    .find(|n| n.has_tag_name("size"))
-                    .and_then(|s| s.attribute("h").and_then(|v| v.parse::<f64>().ok()))
-                    .unwrap_or(0.0);
-                let angle_deg = rr
-                    .children()
-                    .find(|n| n.has_tag_name("angle"))
-                    .and_then(|a| a.attribute("d").and_then(|v| v.parse::<f64>().ok()))
-                    .unwrap_or(0.0);
-                let (sin_a, cos_a) = angle_deg.to_radians().sin_cos();
-                // AABB half-extents of a rotated rectangle.
-                let hw = (w * cos_a.abs() + h * sin_a.abs()) / 2.0;
-                let hh = (w * sin_a.abs() + h * cos_a.abs()) / 2.0;
-                xs = vec![cx - hw, cx + hw];
-                ys = vec![cy - hh, cy + hh];
-            }
+        if xs.is_empty()
+            && let Some(rr) = node.children().find(|n| n.has_tag_name("rotatedRect"))
+        {
+            let cx = rr
+                .children()
+                .find(|n| n.has_tag_name("center"))
+                .and_then(|c| c.attribute("x").and_then(|v| v.parse::<f64>().ok()))
+                .unwrap_or(0.0);
+            let cy = rr
+                .children()
+                .find(|n| n.has_tag_name("center"))
+                .and_then(|c| c.attribute("y").and_then(|v| v.parse::<f64>().ok()))
+                .unwrap_or(0.0);
+            let w = rr
+                .children()
+                .find(|n| n.has_tag_name("size"))
+                .and_then(|s| s.attribute("w").and_then(|v| v.parse::<f64>().ok()))
+                .unwrap_or(0.0);
+            let h = rr
+                .children()
+                .find(|n| n.has_tag_name("size"))
+                .and_then(|s| s.attribute("h").and_then(|v| v.parse::<f64>().ok()))
+                .unwrap_or(0.0);
+            let angle_deg = rr
+                .children()
+                .find(|n| n.has_tag_name("angle"))
+                .and_then(|a| a.attribute("d").and_then(|v| v.parse::<f64>().ok()))
+                .unwrap_or(0.0);
+            let (sin_a, cos_a) = angle_deg.to_radians().sin_cos();
+            // AABB half-extents of a rotated rectangle.
+            let hw = (w * cos_a.abs() + h * sin_a.abs()) / 2.0;
+            let hh = (w * sin_a.abs() + h * cos_a.abs()) / 2.0;
+            xs = vec![cx - hw, cx + hw];
+            ys = vec![cy - hh, cy + hh];
         }
 
         if xs.is_empty() {
@@ -578,7 +578,9 @@ fn load_weights_for_model(model: &mut impl ParamStore, path: &Path) -> Result<()
         let bytes = tv.data();
         anyhow::ensure!(bytes.len() % 4 == 0, "tensor '{}' not f32", key);
         Ok(bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect())
     };
@@ -650,7 +652,9 @@ fn load_weights_for_model(model: &mut impl ParamStore, path: &Path) -> Result<()
                 let bytes = tv.data();
                 anyhow::ensure!(bytes.len() % 4 == 0, "tensor '{key}': not f32");
                 let data: Vec<f32> = bytes
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                     .collect();
                 model
@@ -684,10 +688,10 @@ fn load_weights_for_model(model: &mut impl ParamStore, path: &Path) -> Result<()
 // The closure takes an image path and returns COCO detections:
 //   Vec<(class_id, score, [cx_norm, cy_norm, w_norm, h_norm])>
 #[cfg(any(feature = "cuda", feature = "riscv"))]
-fn build_infer_fn(
-    model_spec: &str,
-    img_size: usize,
-) -> Result<Box<dyn FnMut(&Path) -> Result<Vec<(usize, f32, [f32; 4])>>>> {
+type InferFn = Box<dyn FnMut(&Path) -> Result<Vec<(usize, f32, [f32; 4])>>>;
+
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+fn build_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
     use teeny_core::graph::{DtypeRepr, SymTensor};
     use vision_rs::models::yolo::{
         loss::anchor::AnchorGrid,
@@ -1175,7 +1179,7 @@ async fn main() -> Result<()> {
     // ── Inference setup (no-op without --features cuda or riscv) ──────────
 
     #[cfg(any(feature = "cuda", feature = "riscv"))]
-    let mut infer_fn: Option<Box<dyn FnMut(&Path) -> Result<Vec<(usize, f32, [f32; 4])>>>> = {
+    let mut infer_fn: Option<InferFn> = {
         if let Some(ref spec) = model_spec {
             println!("setting up inference for model '{spec}' …");
             Some(build_infer_fn(spec, 640)?)

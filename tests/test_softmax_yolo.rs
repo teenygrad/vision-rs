@@ -41,7 +41,9 @@ mod cuda {
         );
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -82,8 +84,8 @@ mod cuda {
             &program,
             &launch_cfg(),
             (
-                x_buf.as_device_ptr() as *mut f32,
-                y_buf.as_device_ptr() as *mut f32,
+                x_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
                 N_ROWS as i32,
                 N_COLS as i32,
             ),
@@ -144,9 +146,9 @@ mod cuda {
             &program,
             &launch_cfg(),
             (
-                dy_buf.as_device_ptr() as *mut f32,
-                y_buf.as_device_ptr() as *mut f32,
-                dx_buf.as_device_ptr() as *mut f32,
+                dy_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
+                dx_buf.as_device_ptr(),
                 N_ROWS as i32,
                 N_COLS as i32,
             ),

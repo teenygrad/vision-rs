@@ -58,10 +58,14 @@ jobs:
         run: cargo build --all-features
 
       - name: Clippy
-        # --all-targets is deliberately omitted: examples/yolo26.rs (a large,
-        # separate CLI tool) has pre-existing clippy/fmt debt out of scope
-        # for this pass. Default clippy (lib + bins only) doesn't touch it.
-        run: cargo clippy --all-features -- -D warnings
+        # Every member (the parking-garage demo too) and every target, tests and
+        # examples included, under both the full feature set and the CUDA-free one.
+        run: |
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
       # Even the hardware-independent snapshot tests (comparing generated
       # PTX/MLIR text, not running it) call compile_kernel, which shells

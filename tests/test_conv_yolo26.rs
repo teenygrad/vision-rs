@@ -73,7 +73,9 @@ mod cuda {
         );
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -149,9 +151,9 @@ mod cuda {
             &conv_prog,
             &conv_cfg,
             (
-                x_buf.as_device_ptr() as *mut f32,
-                w_buf.as_device_ptr() as *mut f32,
-                y_conv_buf.as_device_ptr() as *mut f32,
+                x_buf.as_device_ptr(),
+                w_buf.as_device_ptr(),
+                y_conv_buf.as_device_ptr(),
                 BATCH as i32,
                 C_IN as i32,
                 C_OUT as i32,
@@ -197,11 +199,11 @@ mod cuda {
             &stats_prog,
             &bn_cfg,
             (
-                x_nc_buf.as_device_ptr() as *mut f32,
-                mean_buf.as_device_ptr() as *mut f32,
-                rstd_buf.as_device_ptr() as *mut f32,
-                rm_buf.as_device_ptr() as *mut f32,
-                rv_buf.as_device_ptr() as *mut f32,
+                x_nc_buf.as_device_ptr(),
+                mean_buf.as_device_ptr(),
+                rstd_buf.as_device_ptr(),
+                rm_buf.as_device_ptr(),
+                rv_buf.as_device_ptr(),
                 N_BN as i32,
                 C_OUT as i32,
                 BN_EPS,
@@ -228,12 +230,12 @@ mod cuda {
             &norm_prog,
             &bn_cfg,
             (
-                x_nc_buf.as_device_ptr() as *mut f32,
-                y_bn_buf.as_device_ptr() as *mut f32,
-                w_bn_buf.as_device_ptr() as *mut f32,
-                b_bn_buf.as_device_ptr() as *mut f32,
-                mean_buf.as_device_ptr() as *mut f32,
-                rstd_buf.as_device_ptr() as *mut f32,
+                x_nc_buf.as_device_ptr(),
+                y_bn_buf.as_device_ptr(),
+                w_bn_buf.as_device_ptr(),
+                b_bn_buf.as_device_ptr(),
+                mean_buf.as_device_ptr(),
+                rstd_buf.as_device_ptr(),
                 N_BN as i32,
                 C_OUT as i32,
             ),
@@ -254,8 +256,8 @@ mod cuda {
             &silu_prog,
             &testing::launch_config(N_OUT, BLOCK_SILU),
             (
-                y_bn_buf.as_device_ptr() as *mut f32,
-                y_silu_buf.as_device_ptr() as *mut f32,
+                y_bn_buf.as_device_ptr(),
+                y_silu_buf.as_device_ptr(),
                 N_OUT as i32,
             ),
         )?;

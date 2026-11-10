@@ -81,7 +81,9 @@ mod cuda {
         );
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -342,9 +344,9 @@ mod cuda {
                 cluster: [1, 1, 1],
             },
             (
-                d_cv2_conv_nchw_buf.as_device_ptr() as *mut f32, // dy
-                cv2_cw_buf.as_device_ptr() as *mut f32,          // w
-                d_cat_nchw_buf.as_device_ptr() as *mut f32,      // dx (zero-init)
+                d_cv2_conv_nchw_buf.as_device_ptr(), // dy
+                cv2_cw_buf.as_device_ptr(),          // w
+                d_cat_nchw_buf.as_device_ptr(),      // dx (zero-init)
                 BATCH as i32,
                 C_CAT as i32,
                 C_OUT as i32,
@@ -373,8 +375,8 @@ mod cuda {
             &cat_bwd,
             &ch_cfg,
             (
-                d_cat_nc_buf.as_device_ptr() as *mut f32,
-                d_y0.as_device_ptr() as *mut f32,
+                d_cat_nc_buf.as_device_ptr(),
+                d_y0.as_device_ptr(),
                 C as i32,
                 C_CAT as i32,
                 0i32, // y0 slice: ch [0, 16)
@@ -384,8 +386,8 @@ mod cuda {
             &cat_bwd,
             &ch_cfg,
             (
-                d_cat_nc_buf.as_device_ptr() as *mut f32,
-                d_y1_from_cat.as_device_ptr() as *mut f32,
+                d_cat_nc_buf.as_device_ptr(),
+                d_y1_from_cat.as_device_ptr(),
                 C as i32,
                 C_CAT as i32,
                 C as i32, // y1 slice: ch [16, 32)
@@ -395,8 +397,8 @@ mod cuda {
             &cat_bwd,
             &ch_cfg,
             (
-                d_cat_nc_buf.as_device_ptr() as *mut f32,
-                d_m0out.as_device_ptr() as *mut f32,
+                d_cat_nc_buf.as_device_ptr(),
+                d_m0out.as_device_ptr(),
                 C as i32,
                 C_CAT as i32,
                 (2 * C) as i32, // m0_out slice: ch [32, 48)
@@ -440,9 +442,9 @@ mod cuda {
                 cluster: [1, 1, 1],
             },
             (
-                d_m0cv2_nchw_buf.as_device_ptr() as *mut f32, // dy: [B,C_OUT=16,H,W]
-                m0cv2_cw_buf.as_device_ptr() as *mut f32,     // w:  [C_OUT=16, C_IN=8, 3,3]
-                d_m0cv1_silu_nchw_buf.as_device_ptr() as *mut f32, // dx: [B,C_IN=8,H,W]
+                d_m0cv2_nchw_buf.as_device_ptr(),      // dy: [B,C_OUT=16,H,W]
+                m0cv2_cw_buf.as_device_ptr(),          // w:  [C_OUT=16, C_IN=8, 3,3]
+                d_m0cv1_silu_nchw_buf.as_device_ptr(), // dx: [B,C_IN=8,H,W]
                 BATCH as i32,
                 C_INNER as i32,
                 C as i32,
@@ -497,9 +499,9 @@ mod cuda {
                 cluster: [1, 1, 1],
             },
             (
-                d_m0cv1_nchw_buf.as_device_ptr() as *mut f32, // dy: [B,C_OUT=8,H,W]
-                m0cv1_cw_buf.as_device_ptr() as *mut f32,     // w:  [C_OUT=8, C_IN=16,3,3]
-                d_y1_bottleneck_nchw_buf.as_device_ptr() as *mut f32, // dx: [B,C_IN=16,H,W]
+                d_m0cv1_nchw_buf.as_device_ptr(),         // dy: [B,C_OUT=8,H,W]
+                m0cv1_cw_buf.as_device_ptr(),             // w:  [C_OUT=8, C_IN=16,3,3]
+                d_y1_bottleneck_nchw_buf.as_device_ptr(), // dx: [B,C_IN=16,H,W]
                 BATCH as i32,
                 C as i32,
                 C_INNER as i32,
@@ -526,9 +528,9 @@ mod cuda {
             &vadd,
             &testing::launch_config(N_HALF, BLOCK_VADD),
             (
-                d_y1_from_cat.as_device_ptr() as *mut f32,
-                d_y1_bottleneck_nc_buf.as_device_ptr() as *mut f32,
-                d_y1.as_device_ptr() as *mut f32,
+                d_y1_from_cat.as_device_ptr(),
+                d_y1_bottleneck_nc_buf.as_device_ptr(),
+                d_y1.as_device_ptr(),
                 N_HALF as i32,
             ),
         )?;
@@ -544,8 +546,8 @@ mod cuda {
             &chunk_bwd,
             &ch_cfg,
             (
-                d_y0.as_device_ptr() as *mut f32,
-                d_cv1_silu_nc_buf.as_device_ptr() as *mut f32,
+                d_y0.as_device_ptr(),
+                d_cv1_silu_nc_buf.as_device_ptr(),
                 (2 * C) as i32,
                 C as i32,
                 0i32, // y0 → ch [0, 16)
@@ -555,8 +557,8 @@ mod cuda {
             &chunk_bwd,
             &ch_cfg,
             (
-                d_y1.as_device_ptr() as *mut f32,
-                d_cv1_silu_nc_buf.as_device_ptr() as *mut f32,
+                d_y1.as_device_ptr(),
+                d_cv1_silu_nc_buf.as_device_ptr(),
                 (2 * C) as i32,
                 C as i32,
                 C as i32, // y1 → ch [16, 32)
@@ -600,9 +602,9 @@ mod cuda {
                 cluster: [1, 1, 1],
             },
             (
-                d_cv1_conv_nchw_buf.as_device_ptr() as *mut f32, // dy: [B,2C=32,H,W]
-                cv1_cw_buf.as_device_ptr() as *mut f32,          // w:  [2C=32, C_IN=32,1,1]
-                dx_nchw_buf.as_device_ptr() as *mut f32,         // dx: [B,C_IN=32,H,W]
+                d_cv1_conv_nchw_buf.as_device_ptr(), // dy: [B,2C=32,H,W]
+                cv1_cw_buf.as_device_ptr(),          // w:  [2C=32, C_IN=32,1,1]
+                dx_nchw_buf.as_device_ptr(),         // dx: [B,C_IN=32,H,W]
                 BATCH as i32,
                 C_IN as i32,
                 (2 * C) as i32,
