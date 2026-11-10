@@ -44,7 +44,7 @@ the `teeny` compiler fork from source for this.
 1. **Install `cargo-teeny`**:
 
    ```bash
-   cargo install --git https://github.com/teenygrad/cargo-teeny
+   cargo install cargo-teeny
    ```
 
 2. **Install the `teenyc` toolchain**:
@@ -75,6 +75,28 @@ source .env
 cargo build --release
 cargo test
 ```
+
+### Running the parking garage demo
+
+[`demos/parking_garage`](demos/parking_garage/README.md) watches the PKLot car parks and shows
+each lot's occupancy in the browser. It runs as two processes, so start each in its own
+terminal from the repo root:
+
+```bash
+source .env
+
+# Terminal 1: the server (WebSocket API on port 3001). --features cuda and --model add YOLO26n
+# inference; leave both off to see only the dataset's annotated occupancy.
+cargo run --release -p parking-garage --features cuda --bin parking-garage-server -- \
+  --model ultralytics/yolo26n
+
+# Terminal 2: the webapp (port 3000)
+cargo run --release -p parking-garage --bin parking-garage-webapp
+```
+
+Then open <http://127.0.0.1:3000>. On first run the server downloads the PKLot dataset
+(~4.6GB) into `$DATASETS_CACHE_DIR` and the weights into `$MODELS_CACHE_DIR`. See the
+[demo's README](demos/parking_garage/README.md) for running it on a Jetson or a RISC-V board.
 
 ### Cross-compilation for Jetson Orin Nano
 

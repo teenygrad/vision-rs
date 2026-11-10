@@ -33,7 +33,7 @@ prebuilt release — you do **not** need to clone or build the `teeny`
 compiler fork from source:
 
 ```bash
-cargo install --git https://github.com/teenygrad/cargo-teeny
+cargo install cargo-teeny
 cargo teeny install-toolchain
 ```
 

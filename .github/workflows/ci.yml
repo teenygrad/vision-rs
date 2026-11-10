@@ -75,7 +75,7 @@ jobs:
       # fetches a prebuilt release rather than building teenyc from source.
       - name: Install teenyc toolchain
         run: |
-          cargo install --git https://github.com/teenygrad/cargo-teeny
+          cargo install cargo-teeny
           cargo teeny install-toolchain
           echo "TEENYC_PATH=$HOME/.rustup/toolchains/stable-teenyc-x86_64-unknown-linux-gnu/bin/teenyc" >> "$GITHUB_ENV"
 
