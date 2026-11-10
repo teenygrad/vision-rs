@@ -20,7 +20,7 @@ clap           = { version = "4", features = ["derive"] }
 
 [package]
 name = "vision-rs"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "A high-performance computer vision SDK for Rust."
 license = "Apache-2.0"
