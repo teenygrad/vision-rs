@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Full backward-pass integration test for a YOLO26n-equivalent model.
 //
 // Pipeline under test:
@@ -49,9 +48,9 @@ mod cuda {
     use teeny_cuda::{
         compiler::{graph::CudaGraphCompiler, target::Target},
         model::TensorRef,
-        testing,
     };
     use teeny_kernels::graph::TritonLowering;
+    use teeny_test::cuda as testing;
     use vision_rs::models::yolo::{
         loss::yolo26::Yolo26Loss,
         yolo26::blocks::{

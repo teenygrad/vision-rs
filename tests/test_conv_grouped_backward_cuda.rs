@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Grouped and depthwise Conv2dBackwardDx / Conv2dBackwardDw CUDA tests.
 //
 // Two variants, both with BATCH=2, H=W=4, KH=KW=3, stride=1, pad=1:
@@ -34,16 +33,17 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
+    use teeny_cuda::{device::CudaLaunchConfig, errors::Result};
+    use teeny_test::cuda as testing;
 
     const BATCH: usize = 2;
-    const H:     usize = 4;
-    const W:     usize = 4;
+    const H: usize = 4;
+    const W: usize = 4;
 
     const BLOCK_OW: i32 = 4;
-    const TOL:      f32 = 1e-4;
+    const TOL: f32 = 1e-4;
 
     fn load(subdir: &str, name: &str) -> Vec<f32> {
         let path = format!(
@@ -52,51 +52,52 @@ mod cuda {
             subdir,
             name
         );
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
     fn run_grouped_conv_backward(
-        device:      &teeny_cuda::device::CudaDevice,
-        target:      &Target,
-        x_host:      &[f32],
-        w_host:      &[f32],
-        dy_host:     &[f32],
+        device: &teeny_cuda::device::CudaDevice,
+        target: &Target,
+        x_host: &[f32],
+        w_host: &[f32],
+        dy_host: &[f32],
         dx_expected: &[f32],
         dw_expected: &[f32],
-        batch:       usize,
-        c_in:        usize,
-        c_out:       usize,
-        h:           usize,
-        w:           usize,
-        g:           i32,
+        batch: usize,
+        c_in: usize,
+        c_out: usize,
+        h: usize,
+        w: usize,
+        g: i32,
     ) -> Result<()> {
-        let n_x   = batch * c_in  * h * w;
-        let n_w   = c_out * (c_in / g as usize) * 9;
+        let n_x = batch * c_in * h * w;
+        let n_w = c_out * (c_in / g as usize) * 9;
         let n_out = batch * c_out * h * w;
 
-        assert_eq!(x_host.len(),      n_x,   "x size mismatch");
-        assert_eq!(w_host.len(),      n_w,   "w size mismatch");
-        assert_eq!(dy_host.len(),     n_out, "dy size mismatch");
-        assert_eq!(dx_expected.len(), n_x,   "dx_expected size mismatch");
-        assert_eq!(dw_expected.len(), n_w,   "dw_expected size mismatch");
+        assert_eq!(x_host.len(), n_x, "x size mismatch");
+        assert_eq!(w_host.len(), n_w, "w size mismatch");
+        assert_eq!(dy_host.len(), n_out, "dy size mismatch");
+        assert_eq!(dx_expected.len(), n_x, "dx_expected size mismatch");
+        assert_eq!(dw_expected.len(), n_w, "dw_expected size mismatch");
 
         let ow_tiles = w.div_ceil(BLOCK_OW as usize);
         let launch_cfg = CudaLaunchConfig {
-            grid:    [(batch * c_out * h * ow_tiles) as u32, 1, 1],
-            block:   [128, 1, 1],
+            grid: [(batch * c_out * h * ow_tiles) as u32, 1, 1],
+            block: [128, 1, 1],
             cluster: [1, 1, 1],
         };
 
         // Shared buffers for both backward passes.
         let mut dy_buf = device.buffer::<f32>(n_out)?;
-        let mut w_buf  = device.buffer::<f32>(n_w)?;
-        let mut x_buf  = device.buffer::<f32>(n_x)?;
+        let mut w_buf = device.buffer::<f32>(n_w)?;
+        let mut x_buf = device.buffer::<f32>(n_x)?;
         dy_buf.to_device(dy_host)?;
         w_buf.to_device(w_host)?;
         x_buf.to_device(x_host)?;
@@ -105,7 +106,7 @@ mod cuda {
         let dx_kernel = teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx::<f32>::new(
             3, 3, 1, 1, 1, 1, g, BLOCK_OW,
         );
-        let dx_ptx  = std::fs::read(compile_kernel(&dx_kernel, target, true, false)?)?;
+        let dx_ptx = std::fs::read(compile_kernel(&dx_kernel, target, true, false)?)?;
         let dx_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dBackwardDx<f32>,
         >(&dx_ptx)?;
@@ -114,13 +115,22 @@ mod cuda {
         let zeros_x = vec![0.0f32; n_x];
         dx_buf.to_device(&zeros_x)?;
 
-        device.launch(&dx_prog, &launch_cfg, (
-            dy_buf.as_device_ptr() as *mut f32,
-            w_buf.as_device_ptr() as *mut f32,
-            dx_buf.as_device_ptr() as *mut f32,
-            batch as i32, c_in as i32, c_out as i32,
-            h as i32, w as i32, h as i32, w as i32,
-        ))?;
+        device.launch(
+            &dx_prog,
+            &launch_cfg,
+            (
+                dy_buf.as_device_ptr(),
+                w_buf.as_device_ptr(),
+                dx_buf.as_device_ptr(),
+                batch as i32,
+                c_in as i32,
+                c_out as i32,
+                h as i32,
+                w as i32,
+                h as i32,
+                w as i32,
+            ),
+        )?;
 
         let mut dx_gpu = vec![0.0f32; n_x];
         dx_buf.to_host(&mut dx_gpu)?;
@@ -128,7 +138,8 @@ mod cuda {
             assert!(
                 (dx_gpu[i] - dx_expected[i]).abs() < TOL,
                 "BackwardDx g={g} mismatch at {i}: got={} expected={}",
-                dx_gpu[i], dx_expected[i],
+                dx_gpu[i],
+                dx_expected[i],
             );
         }
 
@@ -136,7 +147,7 @@ mod cuda {
         let dw_kernel = teeny_kernels::nn::conv::conv2d::Conv2dBackwardDw::<f32>::new(
             3, 3, 1, 1, 1, 1, g, BLOCK_OW,
         );
-        let dw_ptx  = std::fs::read(compile_kernel(&dw_kernel, target, true, false)?)?;
+        let dw_ptx = std::fs::read(compile_kernel(&dw_kernel, target, true, false)?)?;
         let dw_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dBackwardDw<f32>,
         >(&dw_ptx)?;
@@ -145,13 +156,22 @@ mod cuda {
         let zeros_w = vec![0.0f32; n_w];
         dw_buf.to_device(&zeros_w)?;
 
-        device.launch(&dw_prog, &launch_cfg, (
-            dy_buf.as_device_ptr() as *mut f32,
-            x_buf.as_device_ptr() as *mut f32,
-            dw_buf.as_device_ptr() as *mut f32,
-            batch as i32, c_in as i32, c_out as i32,
-            h as i32, w as i32, h as i32, w as i32,
-        ))?;
+        device.launch(
+            &dw_prog,
+            &launch_cfg,
+            (
+                dy_buf.as_device_ptr(),
+                x_buf.as_device_ptr(),
+                dw_buf.as_device_ptr(),
+                batch as i32,
+                c_in as i32,
+                c_out as i32,
+                h as i32,
+                w as i32,
+                h as i32,
+                w as i32,
+            ),
+        )?;
 
         let mut dw_gpu = vec![0.0f32; n_w];
         dw_buf.to_host(&mut dw_gpu)?;
@@ -159,7 +179,8 @@ mod cuda {
             assert!(
                 (dw_gpu[i] - dw_expected[i]).abs() < TOL,
                 "BackwardDw g={g} mismatch at {i}: got={} expected={}",
-                dw_gpu[i], dw_expected[i],
+                dw_gpu[i],
+                dw_expected[i],
             );
         }
 
@@ -181,7 +202,11 @@ mod cuda {
             &load("depthwise", "dy.bin"),
             &load("depthwise", "dx_expected.bin"),
             &load("depthwise", "dw_expected.bin"),
-            BATCH, 128, 128, H, W,
+            BATCH,
+            128,
+            128,
+            H,
+            W,
             128,
         )
     }
@@ -201,7 +226,11 @@ mod cuda {
             &load("g4", "dy.bin"),
             &load("g4", "dx_expected.bin"),
             &load("g4", "dw_expected.bin"),
-            BATCH, 8, 8, H, W,
+            BATCH,
+            8,
+            8,
+            H,
+            W,
             4,
         )
     }

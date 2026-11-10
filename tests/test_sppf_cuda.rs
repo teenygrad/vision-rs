@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // End-to-end CUDA forward-pass test for the SPPF block.
 //
 // Parameters: SPPF(c_in=32, c_out=32, k=5)
@@ -37,33 +36,34 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
+    use teeny_cuda::{device::CudaLaunchConfig, errors::Result};
+    use teeny_test::cuda as testing;
 
     // ── Dimensions ────────────────────────────────────────────────────────────────
-    const B:        usize = 2;
-    const C_IN:     usize = 32;
-    const C_OUT:    usize = 32;
-    const H:        usize = 4;
-    const W:        usize = 4;
+    const B: usize = 2;
+    const C_IN: usize = 32;
+    const C_OUT: usize = 32;
+    const H: usize = 4;
+    const W: usize = 4;
 
-    const C:        usize = C_IN / 2; // 16 — cv1 output channels
-    const C_CAT:    usize = 4 * C;    // 64 — cat([y, p1, p2, p3])
+    const C: usize = C_IN / 2; // 16 — cv1 output channels
+    const C_CAT: usize = 4 * C; // 64 — cat([y, p1, p2, p3])
 
     const N_SPATIAL: usize = B * H * W; // 32 — BN-style N
 
     // Element counts
-    const N_CV1:  usize = N_SPATIAL * C;     // 512   (B, C, H, W)
-    const N_CAT:  usize = N_SPATIAL * C_CAT; // 2048  (B, 4C, H, W)
-    const N_CV2:  usize = N_SPATIAL * C_OUT; // 1024  (B, C_OUT, H, W)
+    const N_CV1: usize = N_SPATIAL * C; // 512   (B, C, H, W)
+    const N_CAT: usize = N_SPATIAL * C_CAT; // 2048  (B, 4C, H, W)
+    const N_CV2: usize = N_SPATIAL * C_OUT; // 1024  (B, C_OUT, H, W)
 
     // Kernel tuning
-    const BLOCK_OW:   i32 = 4;
-    const BLOCK_BN:   i32 = 128;
+    const BLOCK_OW: i32 = 4;
+    const BLOCK_BN: i32 = 128;
     const BLOCK_SILU: i32 = 128;
-    const BLOCK_CH:   i32 = 128;
-    const BN_EPS:     f32 = 1e-5;
+    const BLOCK_CH: i32 = 128;
+    const BN_EPS: f32 = 1e-5;
 
     // MaxPool2d parameters
     const KH: i32 = 5;
@@ -79,9 +79,11 @@ mod cuda {
             env!("CARGO_MANIFEST_DIR"),
             name
         );
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
-        bytes.chunks_exact(4)
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -129,23 +131,23 @@ mod cuda {
         let target = Target::new(env.capability);
 
         // ── Load fixtures ──────────────────────────────────────────────────────────
-        let x_host      = load("x.bin");
-        let cv1_conv_w  = load("cv1_conv_w.bin");
-        let cv1_bn_w    = load("cv1_bn_w.bin");
-        let cv1_bn_b    = load("cv1_bn_b.bin");
-        let cv1_bn_rm   = load("cv1_bn_rm.bin");
-        let cv1_bn_rv   = load("cv1_bn_rv.bin");
-        let cv2_conv_w  = load("cv2_conv_w.bin");
-        let cv2_bn_w    = load("cv2_bn_w.bin");
-        let cv2_bn_b    = load("cv2_bn_b.bin");
-        let cv2_bn_rm   = load("cv2_bn_rm.bin");
-        let cv2_bn_rv   = load("cv2_bn_rv.bin");
-        let expected    = load("expected_output.bin");
+        let x_host = load("x.bin");
+        let cv1_conv_w = load("cv1_conv_w.bin");
+        let cv1_bn_w = load("cv1_bn_w.bin");
+        let cv1_bn_b = load("cv1_bn_b.bin");
+        let cv1_bn_rm = load("cv1_bn_rm.bin");
+        let cv1_bn_rv = load("cv1_bn_rv.bin");
+        let cv2_conv_w = load("cv2_conv_w.bin");
+        let cv2_bn_w = load("cv2_bn_w.bin");
+        let cv2_bn_b = load("cv2_bn_b.bin");
+        let cv2_bn_rm = load("cv2_bn_rm.bin");
+        let cv2_bn_rv = load("cv2_bn_rv.bin");
+        let expected = load("expected_output.bin");
 
-        assert_eq!(x_host.len(),     B * C_IN * H * W);
-        assert_eq!(cv1_conv_w.len(), C * C_IN);          // [16, 32, 1, 1]
-        assert_eq!(cv2_conv_w.len(), C_OUT * C_CAT);     // [32, 64, 1, 1]
-        assert_eq!(expected.len(),   B * C_OUT * H * W);
+        assert_eq!(x_host.len(), B * C_IN * H * W);
+        assert_eq!(cv1_conv_w.len(), C * C_IN); // [16, 32, 1, 1]
+        assert_eq!(cv2_conv_w.len(), C_OUT * C_CAT); // [32, 64, 1, 1]
+        assert_eq!(expected.len(), B * C_OUT * H * W);
 
         // ── Compile kernels ────────────────────────────────────────────────────────
         // Conv 1×1, s=1, p=0
@@ -167,14 +169,16 @@ mod cuda {
         >(&pool_ptx)?;
 
         // BatchNorm inference
-        let bn_kernel = teeny_kernels::nn::norm::batchnorm::BatchNormForwardInference::<f32>::new(BLOCK_BN);
+        let bn_kernel =
+            teeny_kernels::nn::norm::batchnorm::BatchNormForwardInference::<f32>::new(BLOCK_BN);
         let bn_ptx = std::fs::read(compile_kernel(&bn_kernel, &target, true, false)?)?;
         let bn_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::norm::batchnorm::BatchNormForwardInference<f32>,
         >(&bn_ptx)?;
 
         // SiLU
-        let silu_kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU);
+        let silu_kernel =
+            teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU);
         let silu_ptx = std::fs::read(compile_kernel(&silu_kernel, &target, true, false)?)?;
         let silu_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
@@ -192,7 +196,9 @@ mod cuda {
         let ow_tiles = W.div_ceil(BLOCK_OW as usize);
 
         let bn_cfg = |c_ch: usize| CudaLaunchConfig {
-            grid: [c_ch as u32, 1, 1], block: [1, 1, 1], cluster: [1, 1, 1],
+            grid: [c_ch as u32, 1, 1],
+            block: [1, 1, 1],
+            cluster: [1, 1, 1],
         };
 
         // MaxPool2d grid: B×C×OH×num_ow_tiles (OH=OW=H=W since same-padding)
@@ -212,38 +218,48 @@ mod cuda {
             cluster: [1, 1, 1],
         };
         let c_total_nc = (C_CAT * H * W) as i32; // 1024
-        let chunk_nc_i = (chunk_nc) as i32;       // 256
+        let chunk_nc_i = (chunk_nc) as i32; // 256
 
         // ── Stage 1: cv1 Conv(32→16, 1×1) ─────────────────────────────────────────
-        let mut x_buf      = device.buffer::<f32>(B * C_IN * H * W)?;
+        let mut x_buf = device.buffer::<f32>(B * C_IN * H * W)?;
         let mut cv1_cw_buf = device.buffer::<f32>(C * C_IN)?;
-        let cv1_nchw       = device.buffer::<f32>(N_CV1)?;
+        let cv1_nchw = device.buffer::<f32>(N_CV1)?;
 
         x_buf.to_device(&x_host)?;
         cv1_cw_buf.to_device(&cv1_conv_w)?;
 
-        device.launch(&conv1_prog, &CudaLaunchConfig {
-            grid:  [(B * C * H * ow_tiles) as u32, 1, 1],
-            block: [128, 1, 1], cluster: [1, 1, 1],
-        }, (
-            x_buf.as_device_ptr() as *mut f32,
-            cv1_cw_buf.as_device_ptr() as *mut f32,
-            cv1_nchw.as_device_ptr() as *mut f32,
-            B as i32, C_IN as i32, C as i32,
-            H as i32, W as i32, H as i32, W as i32,
-        ))?;
+        device.launch(
+            &conv1_prog,
+            &CudaLaunchConfig {
+                grid: [(B * C * H * ow_tiles) as u32, 1, 1],
+                block: [128, 1, 1],
+                cluster: [1, 1, 1],
+            },
+            (
+                x_buf.as_device_ptr(),
+                cv1_cw_buf.as_device_ptr(),
+                cv1_nchw.as_device_ptr(),
+                B as i32,
+                C_IN as i32,
+                C as i32,
+                H as i32,
+                W as i32,
+                H as i32,
+                W as i32,
+            ),
+        )?;
 
         // ── Stage 1b: cv1 BN (act=False — no SiLU, matches ultralytics SPPF) ────────
         let mut tmp = vec![0.0f32; N_CV1];
         cv1_nchw.to_host(&mut tmp)?;
         let cv1_nc_host = nchw_to_nc(&tmp, B, C, H, W);
 
-        let mut cv1_nc_buf  = device.buffer::<f32>(N_CV1)?;
-        let cv1_bn_out      = device.buffer::<f32>(N_CV1)?;
+        let mut cv1_nc_buf = device.buffer::<f32>(N_CV1)?;
+        let cv1_bn_out = device.buffer::<f32>(N_CV1)?;
         let mut cv1_bnw_buf = device.buffer::<f32>(C)?;
         let mut cv1_bnb_buf = device.buffer::<f32>(C)?;
-        let mut cv1_bnrm    = device.buffer::<f32>(C)?;
-        let mut cv1_bnrv    = device.buffer::<f32>(C)?;
+        let mut cv1_bnrm = device.buffer::<f32>(C)?;
+        let mut cv1_bnrv = device.buffer::<f32>(C)?;
 
         cv1_nc_buf.to_device(&cv1_nc_host)?;
         cv1_bnw_buf.to_device(&cv1_bn_w)?;
@@ -251,15 +267,21 @@ mod cuda {
         cv1_bnrm.to_device(&cv1_bn_rm)?;
         cv1_bnrv.to_device(&cv1_bn_rv)?;
 
-        device.launch(&bn_prog, &bn_cfg(C), (
-            cv1_nc_buf.as_device_ptr() as *mut f32,
-            cv1_bn_out.as_device_ptr() as *mut f32,
-            cv1_bnw_buf.as_device_ptr() as *mut f32,
-            cv1_bnb_buf.as_device_ptr() as *mut f32,
-            cv1_bnrm.as_device_ptr() as *mut f32,
-            cv1_bnrv.as_device_ptr() as *mut f32,
-            N_SPATIAL as i32, C as i32, BN_EPS,
-        ))?;
+        device.launch(
+            &bn_prog,
+            &bn_cfg(C),
+            (
+                cv1_nc_buf.as_device_ptr(),
+                cv1_bn_out.as_device_ptr(),
+                cv1_bnw_buf.as_device_ptr(),
+                cv1_bnb_buf.as_device_ptr(),
+                cv1_bnrm.as_device_ptr(),
+                cv1_bnrv.as_device_ptr(),
+                N_SPATIAL as i32,
+                C as i32,
+                BN_EPS,
+            ),
+        )?;
 
         // ── Stage 2: Convert NC → NCHW for MaxPool2d ──────────────────────────────
         let mut cv1_bn_nc = vec![0.0f32; N_CV1];
@@ -271,25 +293,52 @@ mod cuda {
 
         // ── Stage 3: MaxPool2d × 3 (same-spatial, k=5, s=1, p=2) ─────────────────
         let p1_buf = device.buffer::<f32>(N_CV1)?;
-        device.launch(&pool_prog, &pool_cfg, (
-            y_buf.as_device_ptr() as *mut f32,
-            p1_buf.as_device_ptr() as *mut f32,
-            B as i32, C as i32, H as i32, W as i32, H as i32, W as i32,
-        ))?;
+        device.launch(
+            &pool_prog,
+            &pool_cfg,
+            (
+                y_buf.as_device_ptr(),
+                p1_buf.as_device_ptr(),
+                B as i32,
+                C as i32,
+                H as i32,
+                W as i32,
+                H as i32,
+                W as i32,
+            ),
+        )?;
 
         let p2_buf = device.buffer::<f32>(N_CV1)?;
-        device.launch(&pool_prog, &pool_cfg, (
-            p1_buf.as_device_ptr() as *mut f32,
-            p2_buf.as_device_ptr() as *mut f32,
-            B as i32, C as i32, H as i32, W as i32, H as i32, W as i32,
-        ))?;
+        device.launch(
+            &pool_prog,
+            &pool_cfg,
+            (
+                p1_buf.as_device_ptr(),
+                p2_buf.as_device_ptr(),
+                B as i32,
+                C as i32,
+                H as i32,
+                W as i32,
+                H as i32,
+                W as i32,
+            ),
+        )?;
 
         let p3_buf = device.buffer::<f32>(N_CV1)?;
-        device.launch(&pool_prog, &pool_cfg, (
-            p2_buf.as_device_ptr() as *mut f32,
-            p3_buf.as_device_ptr() as *mut f32,
-            B as i32, C as i32, H as i32, W as i32, H as i32, W as i32,
-        ))?;
+        device.launch(
+            &pool_prog,
+            &pool_cfg,
+            (
+                p2_buf.as_device_ptr(),
+                p3_buf.as_device_ptr(),
+                B as i32,
+                C as i32,
+                H as i32,
+                W as i32,
+                H as i32,
+                W as i32,
+            ),
+        )?;
 
         // ── Stage 4: ChannelCat([y, p1, p2, p3]) in NCHW-as-NC (N=B, C=c×H×W) ───
         //
@@ -297,55 +346,89 @@ mod cuda {
         // c_total_nc = 4×256 = 1024 per batch row.
         let cat_buf = device.buffer::<f32>(N_CAT)?;
 
-        device.launch(&cat_prog, &cat_cfg, (
-            y_buf.as_device_ptr() as *mut f32,
-            cat_buf.as_device_ptr() as *mut f32,
-            chunk_nc_i, c_total_nc, 0i32,
-        ))?;
-        device.launch(&cat_prog, &cat_cfg, (
-            p1_buf.as_device_ptr() as *mut f32,
-            cat_buf.as_device_ptr() as *mut f32,
-            chunk_nc_i, c_total_nc, chunk_nc_i,
-        ))?;
-        device.launch(&cat_prog, &cat_cfg, (
-            p2_buf.as_device_ptr() as *mut f32,
-            cat_buf.as_device_ptr() as *mut f32,
-            chunk_nc_i, c_total_nc, 2 * chunk_nc_i,
-        ))?;
-        device.launch(&cat_prog, &cat_cfg, (
-            p3_buf.as_device_ptr() as *mut f32,
-            cat_buf.as_device_ptr() as *mut f32,
-            chunk_nc_i, c_total_nc, 3 * chunk_nc_i,
-        ))?;
+        device.launch(
+            &cat_prog,
+            &cat_cfg,
+            (
+                y_buf.as_device_ptr(),
+                cat_buf.as_device_ptr(),
+                chunk_nc_i,
+                c_total_nc,
+                0i32,
+            ),
+        )?;
+        device.launch(
+            &cat_prog,
+            &cat_cfg,
+            (
+                p1_buf.as_device_ptr(),
+                cat_buf.as_device_ptr(),
+                chunk_nc_i,
+                c_total_nc,
+                chunk_nc_i,
+            ),
+        )?;
+        device.launch(
+            &cat_prog,
+            &cat_cfg,
+            (
+                p2_buf.as_device_ptr(),
+                cat_buf.as_device_ptr(),
+                chunk_nc_i,
+                c_total_nc,
+                2 * chunk_nc_i,
+            ),
+        )?;
+        device.launch(
+            &cat_prog,
+            &cat_cfg,
+            (
+                p3_buf.as_device_ptr(),
+                cat_buf.as_device_ptr(),
+                chunk_nc_i,
+                c_total_nc,
+                3 * chunk_nc_i,
+            ),
+        )?;
 
         // ── Stage 5: cv2 Conv(64→32, 1×1) ─────────────────────────────────────────
         // ChannelCat output is in NCHW-as-NC with N=B, effectively NCHW (B, 4C, H, W).
         let mut cv2_cw_buf = device.buffer::<f32>(C_OUT * C_CAT)?;
-        let cv2_nchw       = device.buffer::<f32>(N_CV2)?;
+        let cv2_nchw = device.buffer::<f32>(N_CV2)?;
         cv2_cw_buf.to_device(&cv2_conv_w)?;
 
-        device.launch(&conv1_prog, &CudaLaunchConfig {
-            grid:  [(B * C_OUT * H * ow_tiles) as u32, 1, 1],
-            block: [128, 1, 1], cluster: [1, 1, 1],
-        }, (
-            cat_buf.as_device_ptr() as *mut f32,
-            cv2_cw_buf.as_device_ptr() as *mut f32,
-            cv2_nchw.as_device_ptr() as *mut f32,
-            B as i32, C_CAT as i32, C_OUT as i32,
-            H as i32, W as i32, H as i32, W as i32,
-        ))?;
+        device.launch(
+            &conv1_prog,
+            &CudaLaunchConfig {
+                grid: [(B * C_OUT * H * ow_tiles) as u32, 1, 1],
+                block: [128, 1, 1],
+                cluster: [1, 1, 1],
+            },
+            (
+                cat_buf.as_device_ptr(),
+                cv2_cw_buf.as_device_ptr(),
+                cv2_nchw.as_device_ptr(),
+                B as i32,
+                C_CAT as i32,
+                C_OUT as i32,
+                H as i32,
+                W as i32,
+                H as i32,
+                W as i32,
+            ),
+        )?;
 
         // ── Stage 5b: cv2 BN + SiLU ───────────────────────────────────────────────
         let mut tmp = vec![0.0f32; N_CV2];
         cv2_nchw.to_host(&mut tmp)?;
         let cv2_nc_host = nchw_to_nc(&tmp, B, C_OUT, H, W);
 
-        let mut cv2_nc_buf  = device.buffer::<f32>(N_CV2)?;
-        let cv2_bn_out      = device.buffer::<f32>(N_CV2)?;
+        let mut cv2_nc_buf = device.buffer::<f32>(N_CV2)?;
+        let cv2_bn_out = device.buffer::<f32>(N_CV2)?;
         let mut cv2_bnw_buf = device.buffer::<f32>(C_OUT)?;
         let mut cv2_bnb_buf = device.buffer::<f32>(C_OUT)?;
-        let mut cv2_bnrm    = device.buffer::<f32>(C_OUT)?;
-        let mut cv2_bnrv    = device.buffer::<f32>(C_OUT)?;
+        let mut cv2_bnrm = device.buffer::<f32>(C_OUT)?;
+        let mut cv2_bnrv = device.buffer::<f32>(C_OUT)?;
 
         cv2_nc_buf.to_device(&cv2_nc_host)?;
         cv2_bnw_buf.to_device(&cv2_bn_w)?;
@@ -353,22 +436,32 @@ mod cuda {
         cv2_bnrm.to_device(&cv2_bn_rm)?;
         cv2_bnrv.to_device(&cv2_bn_rv)?;
 
-        device.launch(&bn_prog, &bn_cfg(C_OUT), (
-            cv2_nc_buf.as_device_ptr() as *mut f32,
-            cv2_bn_out.as_device_ptr() as *mut f32,
-            cv2_bnw_buf.as_device_ptr() as *mut f32,
-            cv2_bnb_buf.as_device_ptr() as *mut f32,
-            cv2_bnrm.as_device_ptr() as *mut f32,
-            cv2_bnrv.as_device_ptr() as *mut f32,
-            N_SPATIAL as i32, C_OUT as i32, BN_EPS,
-        ))?;
+        device.launch(
+            &bn_prog,
+            &bn_cfg(C_OUT),
+            (
+                cv2_nc_buf.as_device_ptr(),
+                cv2_bn_out.as_device_ptr(),
+                cv2_bnw_buf.as_device_ptr(),
+                cv2_bnb_buf.as_device_ptr(),
+                cv2_bnrm.as_device_ptr(),
+                cv2_bnrv.as_device_ptr(),
+                N_SPATIAL as i32,
+                C_OUT as i32,
+                BN_EPS,
+            ),
+        )?;
 
         let cv2_silu = device.buffer::<f32>(N_CV2)?;
-        device.launch(&silu_prog, &testing::launch_config(N_CV2, BLOCK_SILU), (
-            cv2_bn_out.as_device_ptr() as *mut f32,
-            cv2_silu.as_device_ptr() as *mut f32,
-            N_CV2 as i32,
-        ))?;
+        device.launch(
+            &silu_prog,
+            &testing::launch_config(N_CV2, BLOCK_SILU),
+            (
+                cv2_bn_out.as_device_ptr(),
+                cv2_silu.as_device_ptr(),
+                N_CV2 as i32,
+            ),
+        )?;
 
         // ── Compare ───────────────────────────────────────────────────────────────
         // GPU output is NC (N=B*H*W, C=C_OUT); convert expected NCHW → NC for comparison.
@@ -380,7 +473,8 @@ mod cuda {
             assert!(
                 (y_nc[i] - expected_nc[i]).abs() < 1e-3,
                 "sppf mismatch at element {i}: gpu={} expected={}",
-                y_nc[i], expected_nc[i],
+                y_nc[i],
+                expected_nc[i],
             );
         }
 

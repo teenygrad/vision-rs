@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Graph-level tests for the YOLO26 nano variant (depth=0.5, width=0.25, mc=1024).
 //
 // YOLO26n channel widths:
@@ -63,18 +62,20 @@
 //   scores = [B, 80·84, 1, 1] = [B, 6720, 1, 1]
 
 use teeny_core::graph::{DtypeRepr, Op, SymTensor};
-use vision_rs::models::yolo::yolo26::{blocks::detect::DetectHead, Yolo26Variant, yolo26};
+use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
 fn sym_input() -> SymTensor {
-    let (t, _graph) = SymTensor::input(
-        DtypeRepr::F32,
-        vec![Some(2), Some(3), Some(64), Some(64)],
-    );
+    let (t, _graph) = SymTensor::input(DtypeRepr::F32, vec![Some(2), Some(3), Some(64), Some(64)]);
     t
 }
 
 fn count_op(y: &SymTensor, pred: impl Fn(&Op) -> bool) -> usize {
-    y.graph.borrow().nodes.iter().filter(|n| pred(&n.op)).count()
+    y.graph
+        .borrow()
+        .nodes
+        .iter()
+        .filter(|n| pred(&n.op))
+        .count()
 }
 
 // ── Output shape tests ────────────────────────────────────────────────────────
@@ -92,7 +93,10 @@ fn test_yolo26n_scores_shape() {
     let x = sym_input();
     let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     // 80 × (8²+4²+2²) = 80 × 84 = 6720
-    assert_eq!(out.scores.shape, vec![Some(2), Some(6720), Some(1), Some(1)]);
+    assert_eq!(
+        out.scores.shape,
+        vec![Some(2), Some(6720), Some(1), Some(1)]
+    );
 }
 
 // ── Backbone structural checks ────────────────────────────────────────────────
@@ -104,7 +108,10 @@ fn test_yolo26n_has_attention() {
     let x = sym_input();
     let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     let n_custom = count_op(&out.boxes, |op| matches!(op, Op::Custom { .. }));
-    assert!(n_custom >= 1, "expected custom ops from C2PSA PSA attention, got 0");
+    assert!(
+        n_custom >= 1,
+        "expected custom ops from C2PSA PSA attention, got 0"
+    );
 }
 
 #[test]
@@ -137,7 +144,10 @@ fn test_yolo26n_has_conv2d() {
     let x = sym_input();
     let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     let n_conv = count_op(&out.boxes, |op| matches!(op, Op::Conv2d { .. }));
-    assert!(n_conv >= 30, "expected at least 30 Conv2d nodes, got {n_conv}");
+    assert!(
+        n_conv >= 30,
+        "expected at least 30 Conv2d nodes, got {n_conv}"
+    );
 }
 
 #[test]
@@ -146,7 +156,10 @@ fn test_yolo26n_has_batchnorm() {
     let x = sym_input();
     let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     let n_bn = count_op(&out.boxes, |op| matches!(op, Op::BatchNorm2d { .. }));
-    assert!(n_bn >= 25, "expected at least 25 BatchNorm2d nodes, got {n_bn}");
+    assert!(
+        n_bn >= 25,
+        "expected at least 25 BatchNorm2d nodes, got {n_bn}"
+    );
 }
 
 #[test]
@@ -156,7 +169,10 @@ fn test_yolo26n_channel_cat_count() {
     let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     let n_cat = count_op(&out.scores, |op| matches!(op, Op::ChannelCat { .. }));
     // neck: 2 cats, detect: 2 cats (boxes + scores flat concat), plus C3k2 internal cats
-    assert!(n_cat >= 10, "expected at least 10 ChannelCat nodes, got {n_cat}");
+    assert!(
+        n_cat >= 10,
+        "expected at least 10 ChannelCat nodes, got {n_cat}"
+    );
 }
 
 // ── Batch dimension preserved ─────────────────────────────────────────────────
@@ -173,10 +189,7 @@ fn test_yolo26n_batch_dim_preserved() {
 
 #[test]
 fn test_yolo26n_dynamic_batch() {
-    let (x, _graph) = SymTensor::input(
-        DtypeRepr::F32,
-        vec![None, Some(3), Some(64), Some(64)],
-    );
+    let (x, _graph) = SymTensor::input(DtypeRepr::F32, vec![None, Some(3), Some(64), Some(64)]);
     let out = yolo26::<f32>(80, &Yolo26Variant::N, DetectHead::OneToMany)(x);
     // Batch dim should propagate as None (dynamic)
     assert_eq!(out.boxes.shape[0], None);

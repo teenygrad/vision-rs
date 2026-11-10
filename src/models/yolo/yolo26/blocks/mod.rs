@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 /// Residual bottleneck block.
 pub mod bottleneck;
 /// C2PSA block: cross-stage partial block with position-sensitive attention.

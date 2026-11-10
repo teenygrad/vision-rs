@@ -13,7 +13,9 @@ A high-performance computer vision SDK for Rust.
   ```
 
 - **CUDA Toolkit 13.3 or later** on the host (for the `cuda` feature — on by default — and for
-  ahead-of-time kernel compilation via the custom `teenyc` compiler; see below). Check with:
+  ahead-of-time kernel compilation via the custom `teenyc` compiler; see below). Not needed for
+  a RISC-V-only build (`--no-default-features --features riscv`; see
+  [RISC-V RVV](#risc-v-rvv)). Check with:
 
   ```bash
   nvcc --version
@@ -135,10 +137,11 @@ Compiled artifacts land in `target/aarch64-unknown-linux-gnu/release/`.
 
 `cargo teeny build` wraps `cross build` and automatically:
 
-- Resolves the [teenygrad](https://github.com/teenygrad/teenygrad) workspace root from the
-  `[patch.crates-io]` entries in `Cargo.toml` and mounts it into the cross container (required
+- If `Cargo.toml` has a `[patch.crates-io]` section pointing at a local
+  [teenygrad](https://github.com/teenygrad/teenygrad) checkout (only when developing against
+  unreleased teenygrad), resolves that workspace root and mounts it into the cross container,
   because cross only auto-mounts individual crate directories, not the workspace root that
-  provides `Cargo.toml` inheritance).
+  provides `Cargo.toml` inheritance.
 - Mounts the host CUDA aarch64 target directory at the path the cross container's Dockerfile
   expects.
 - Uses the custom Docker image defined in `docker/Dockerfile.jetson-orin-nano`, which extends the
@@ -182,6 +185,30 @@ cargo teeny package \
   on the device — see `teeny_compiler::compiler::default_cache_dir()`), so it uses the
   pre-compiled kernels instead of trying to JIT-compile (which would fail: there's no `teenyc` on
   the Jetson).
+
+## RISC-V RVV
+
+The `riscv` feature compiles YOLO26's kernels ahead of time for RISC-V cores with the RVV 1.0
+vector extension, and cross-builds the crate for `riscv64gc-unknown-linux-gnu`. Build it with
+`--no-default-features` to leave out CUDA entirely; no CUDA toolkit is needed. Inference,
+training and benchmarking still need `cuda`, because teenygrad has no RISC-V model runtime yet.
+
+```bash
+# Ahead-of-time compile the kernels (on the host) for a SpacemiT K3
+cargo teeny aot --example yolo26 --no-default-features --features riscv,training \
+  --device riscv --options "capability=spacemit-k3"
+
+# Cross-build (stock `cross` riscv64gc image) and smoke-test under qemu-riscv64
+cargo teeny build --target riscv-rvv --example yolo26 --no-default-features --features riscv,training
+cargo teeny run --target riscv-rvv --example yolo26 --no-default-features --features riscv,training -- --help
+
+# Both in one bundle; --device/--options default from the board profile
+cargo teeny package --target spacemit-k3 --example yolo26 --dest ./dist/yolo26-k3 \
+  --no-default-features --features riscv,training
+```
+
+`capability` is one of `generic-rvv1.0`, `spacemit-k1` or `spacemit-k3`. The `riscv-rvv` board
+profile uses `generic-rvv1.0`.
 
 ## Deploying to the Orin
 

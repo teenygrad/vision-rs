@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 //! Simplified TaskAlignedAssigner (CPU-side).
 //!
 //! For each GT box, alignment scores are:
@@ -69,7 +68,11 @@ pub struct TaskAlignedAssigner {
 
 impl Default for TaskAlignedAssigner {
     fn default() -> Self {
-        Self { top_k: 8, alpha: 0.5, beta: 6.0 }
+        Self {
+            top_k: 8,
+            alpha: 0.5,
+            beta: 6.0,
+        }
     }
 }
 
@@ -96,23 +99,31 @@ impl TaskAlignedAssigner {
         let m = gt_boxes.len();
         let nc = pred_scores.len() / a;
 
-        let mut target_boxes    = vec![0.0f32; 4 * a];
-        let mut target_cls      = vec![0usize; a];
-        let mut soft_target     = vec![0.0f32; a];
-        let mut assigned_score  = vec![-1.0f32; a]; // -1 = unassigned
-        let mut assigned_gt     = vec![0usize; a];
-        let mut is_positive     = vec![false; a];
+        let mut target_boxes = vec![0.0f32; 4 * a];
+        let mut target_cls = vec![0usize; a];
+        let mut soft_target = vec![0.0f32; a];
+        let mut assigned_score = vec![-1.0f32; a]; // -1 = unassigned
+        let mut assigned_gt = vec![0usize; a];
+        let mut is_positive = vec![false; a];
 
         if m == 0 {
-            return AssignResult { is_positive, target_boxes, target_cls, soft_target };
+            return AssignResult {
+                is_positive,
+                target_boxes,
+                target_cls,
+                soft_target,
+            };
         }
 
         // Pre-compute sigmoid of predicted class scores.
-        let sig: Vec<f32> = pred_scores.iter().map(|&x| 1.0 / (1.0 + (-x).exp())).collect();
+        let sig: Vec<f32> = pred_scores
+            .iter()
+            .map(|&x| 1.0 / (1.0 + (-x).exp()))
+            .collect();
 
         // Per-GT tracking for soft-target normalisation.
         let mut gt_max_align = vec![0.0f32; m]; // max alignment score among top-k
-        let mut gt_max_iou   = vec![0.0f32; m]; // max IoU among top-k
+        let mut gt_max_iou = vec![0.0f32; m]; // max IoU among top-k
 
         // Flat list of (gt_idx, anchor_idx, align_score, iou) from top-k per GT.
         let mut candidates: Vec<(usize, usize, f32, f32)> = Vec::new();
@@ -122,30 +133,45 @@ impl TaskAlignedAssigner {
             let gc = gt_cls[gi];
             let [gx, gy, gw, gh] = gt_box;
 
-            let mut scores: Vec<(usize, f32, f32)> = (0..a).filter_map(|ai| {
-                let cx = anchor_cx[ai];
-                let cy = anchor_cy[ai];
-                if cx < gx - gw * 0.5 || cx > gx + gw * 0.5
-                    || cy < gy - gh * 0.5 || cy > gy + gh * 0.5
-                {
-                    return None;
-                }
+            let mut scores: Vec<(usize, f32, f32)> = (0..a)
+                .filter_map(|ai| {
+                    let cx = anchor_cx[ai];
+                    let cy = anchor_cy[ai];
+                    if cx < gx - gw * 0.5
+                        || cx > gx + gw * 0.5
+                        || cy < gy - gh * 0.5
+                        || cy > gy + gh * 0.5
+                    {
+                        return None;
+                    }
 
-                let p = [pred_xywh[ai], pred_xywh[a+ai], pred_xywh[2*a+ai], pred_xywh[3*a+ai]];
-                let iou = iou_xywh(p, gt_box).max(0.0);
-                let cls_score = if gc < nc { sig[gc * a + ai] } else { 0.0 };
-                let align = cls_score.powf(self.alpha) * iou.powf(self.beta);
-                Some((ai, align, iou))
-            }).collect();
+                    let p = [
+                        pred_xywh[ai],
+                        pred_xywh[a + ai],
+                        pred_xywh[2 * a + ai],
+                        pred_xywh[3 * a + ai],
+                    ];
+                    let iou = iou_xywh(p, gt_box).max(0.0);
+                    let cls_score = if gc < nc { sig[gc * a + ai] } else { 0.0 };
+                    let align = cls_score.powf(self.alpha) * iou.powf(self.beta);
+                    Some((ai, align, iou))
+                })
+                .collect();
 
-            if scores.is_empty() { continue; }
+            if scores.is_empty() {
+                continue;
+            }
 
             scores.sort_unstable_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
             scores.truncate(self.top_k);
 
             for &(ai, align, iou) in &scores {
-                if align > gt_max_align[gi] { gt_max_align[gi] = align; }
-                if iou   > gt_max_iou[gi]   { gt_max_iou[gi]   = iou; }
+                if align > gt_max_align[gi] {
+                    gt_max_align[gi] = align;
+                }
+                if iou > gt_max_iou[gi] {
+                    gt_max_iou[gi] = iou;
+                }
                 candidates.push((gi, ai, align, iou));
             }
         }
@@ -154,14 +180,14 @@ impl TaskAlignedAssigner {
         for (gi, ai, align, _iou) in &candidates {
             if *align > assigned_score[*ai] {
                 assigned_score[*ai] = *align;
-                assigned_gt[*ai]    = *gi;
-                is_positive[*ai]    = true;
-                target_cls[*ai]     = gt_cls[*gi];
+                assigned_gt[*ai] = *gi;
+                is_positive[*ai] = true;
+                target_cls[*ai] = gt_cls[*gi];
                 let gt_box = gt_boxes[*gi];
-                target_boxes[*ai]           = gt_box[0];
-                target_boxes[a  + *ai]      = gt_box[1];
-                target_boxes[2*a + *ai]     = gt_box[2];
-                target_boxes[3*a + *ai]     = gt_box[3];
+                target_boxes[*ai] = gt_box[0];
+                target_boxes[a + *ai] = gt_box[1];
+                target_boxes[2 * a + *ai] = gt_box[2];
+                target_boxes[3 * a + *ai] = gt_box[3];
             }
         }
 
@@ -169,12 +195,17 @@ impl TaskAlignedAssigner {
         const EPS: f32 = 1e-8;
         for ai in 0..a {
             if is_positive[ai] {
-                let gi    = assigned_gt[ai];
+                let gi = assigned_gt[ai];
                 let align = assigned_score[ai];
                 soft_target[ai] = (align / (gt_max_align[gi] + EPS)) * gt_max_iou[gi];
             }
         }
 
-        AssignResult { is_positive, target_boxes, target_cls, soft_target }
+        AssignResult {
+            is_positive,
+            target_boxes,
+            target_cls,
+            soft_target,
+        }
     }
 }

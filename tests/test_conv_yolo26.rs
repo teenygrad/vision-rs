@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Conv block forward pass for the YOLO26n (nano) stem.
 //
 // Architecture: Conv2d(3→16, 3×3, stride=2, padding=1, bias=False)
@@ -37,30 +36,31 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
+    use teeny_cuda::{device::CudaLaunchConfig, errors::Result};
+    use teeny_test::cuda as testing;
 
     // ── Dimensions ──────────────────────────────────────────────────────────────
     const BATCH: usize = 2;
-    const C_IN:  usize = 3;
+    const C_IN: usize = 3;
     const C_OUT: usize = 16;
-    const H_IN:  usize = 16;
-    const W_IN:  usize = 16;
-    const K:     usize = 3;
-    const S:     usize = 2;
-    const PAD:   usize = 1;
+    const H_IN: usize = 16;
+    const W_IN: usize = 16;
+    const K: usize = 3;
+    const S: usize = 2;
+    const PAD: usize = 1;
     const H_OUT: usize = (H_IN + 2 * PAD - K) / S + 1; // 8
     const W_OUT: usize = (W_IN + 2 * PAD - K) / S + 1; // 8
-    const N_BN:  usize = BATCH * H_OUT * W_OUT;         // 128 — BN "rows" per channel
+    const N_BN: usize = BATCH * H_OUT * W_OUT; // 128 — BN "rows" per channel
     const N_OUT: usize = BATCH * C_OUT * H_OUT * W_OUT; // 2048
 
     // ── Kernel tuning ────────────────────────────────────────────────────────────
-    const BLOCK_OW:   i32 = 8;   // conv2d output-column tile
+    const BLOCK_OW: i32 = 8; // conv2d output-column tile
     const BLOCK_N_BN: i32 = 128; // BN tile over the N_BN rows
     const BLOCK_SILU: i32 = 128; // SiLU element tile
 
-    const BN_EPS:      f32 = 1e-5;
+    const BN_EPS: f32 = 1e-5;
     const BN_MOMENTUM: f32 = 0.1;
 
     // ── Fixture loader ───────────────────────────────────────────────────────────
@@ -71,10 +71,11 @@ mod cuda {
             env!("CARGO_MANIFEST_DIR"),
             rel
         );
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -90,7 +91,7 @@ mod cuda {
                 for hi in 0..h {
                     for wi in 0..w {
                         let src_i = bi * c * h * w + ci * h * w + hi * w + wi;
-                        let ni    = bi * h * w + hi * w + wi;
+                        let ni = bi * h * w + hi * w + wi;
                         out[ni * c + ci] = src[src_i];
                     }
                 }
@@ -110,23 +111,23 @@ mod cuda {
         let target = Target::new(env.capability);
 
         // ── Load fixtures ────────────────────────────────────────────────────────
-        let x_host      = load_fixture("x.bin");
+        let x_host = load_fixture("x.bin");
         let conv_weight = load_fixture("conv_weight.bin");
-        let bn_weight   = load_fixture("bn_weight.bin");
-        let bn_bias     = load_fixture("bn_bias.bin");
-        let bn_rm       = load_fixture("bn_running_mean.bin");
-        let bn_rv       = load_fixture("bn_running_var.bin");
-        let expected    = load_fixture("expected_output.bin");
+        let bn_weight = load_fixture("bn_weight.bin");
+        let bn_bias = load_fixture("bn_bias.bin");
+        let bn_rm = load_fixture("bn_running_mean.bin");
+        let bn_rv = load_fixture("bn_running_var.bin");
+        let expected = load_fixture("expected_output.bin");
 
-        assert_eq!(x_host.len(),      BATCH * C_IN  * H_IN  * W_IN);
-        assert_eq!(conv_weight.len(), C_OUT * C_IN  * K * K);
-        assert_eq!(bn_weight.len(),   C_OUT);
-        assert_eq!(expected.len(),    N_OUT);
+        assert_eq!(x_host.len(), BATCH * C_IN * H_IN * W_IN);
+        assert_eq!(conv_weight.len(), C_OUT * C_IN * K * K);
+        assert_eq!(bn_weight.len(), C_OUT);
+        assert_eq!(expected.len(), N_OUT);
 
         // ── Stage 1: Conv2d with in-kernel padding ───────────────────────────────
         // PAD_H=1, PAD_W=1 are const generics on the kernel — no host-side padding.
-        let mut x_buf  = device.buffer::<f32>(BATCH * C_IN * H_IN * W_IN)?;
-        let mut w_buf  = device.buffer::<f32>(C_OUT * C_IN * K * K)?;
+        let mut x_buf = device.buffer::<f32>(BATCH * C_IN * H_IN * W_IN)?;
+        let mut w_buf = device.buffer::<f32>(C_OUT * C_IN * K * K)?;
         let y_conv_buf = device.buffer::<f32>(N_OUT)?;
 
         x_buf.to_device(&x_host)?;
@@ -142,17 +143,26 @@ mod cuda {
 
         let num_ow_tiles = W_OUT.div_ceil(BLOCK_OW as usize);
         let conv_cfg = CudaLaunchConfig {
-            grid:    [(BATCH * C_OUT * H_OUT * num_ow_tiles) as u32, 1, 1],
-            block:   [128, 1, 1],
+            grid: [(BATCH * C_OUT * H_OUT * num_ow_tiles) as u32, 1, 1],
+            block: [128, 1, 1],
             cluster: [1, 1, 1],
         };
-        device.launch(&conv_prog, &conv_cfg, (
-            x_buf.as_device_ptr() as *mut f32,
-            w_buf.as_device_ptr() as *mut f32,
-            y_conv_buf.as_device_ptr() as *mut f32,
-            BATCH as i32, C_IN as i32, C_OUT as i32,
-            H_IN as i32, W_IN as i32, H_OUT as i32, W_OUT as i32,
-        ))?;
+        device.launch(
+            &conv_prog,
+            &conv_cfg,
+            (
+                x_buf.as_device_ptr(),
+                w_buf.as_device_ptr(),
+                y_conv_buf.as_device_ptr(),
+                BATCH as i32,
+                C_IN as i32,
+                C_OUT as i32,
+                H_IN as i32,
+                W_IN as i32,
+                H_OUT as i32,
+                W_OUT as i32,
+            ),
+        )?;
 
         // ── NCHW → NC transpose (host) ───────────────────────────────────────────
         // BN kernel uses offset n*C+c (channels-last), conv output is NCHW.
@@ -163,16 +173,16 @@ mod cuda {
         // ── Stage 2a: BatchNorm stats ────────────────────────────────────────────
         // Computes per-channel batch mean + rstd; updates running stats via EMA.
         let bn_cfg = CudaLaunchConfig {
-            grid:    [C_OUT as u32, 1, 1],
-            block:   [1, 1, 1],
+            grid: [C_OUT as u32, 1, 1],
+            block: [1, 1, 1],
             cluster: [1, 1, 1],
         };
 
         let mut x_nc_buf = device.buffer::<f32>(N_BN * C_OUT)?;
-        let     mean_buf = device.buffer::<f32>(C_OUT)?;
-        let     rstd_buf = device.buffer::<f32>(C_OUT)?;
-        let mut rm_buf   = device.buffer::<f32>(C_OUT)?;
-        let mut rv_buf   = device.buffer::<f32>(C_OUT)?;
+        let mean_buf = device.buffer::<f32>(C_OUT)?;
+        let rstd_buf = device.buffer::<f32>(C_OUT)?;
+        let mut rm_buf = device.buffer::<f32>(C_OUT)?;
+        let mut rv_buf = device.buffer::<f32>(C_OUT)?;
 
         x_nc_buf.to_device(&conv_nc)?;
         rm_buf.to_device(&bn_rm)?;
@@ -185,19 +195,26 @@ mod cuda {
             teeny_kernels::nn::norm::batchnorm::BatchNormStatsForward<f32>,
         >(&stats_ptx)?;
 
-        device.launch(&stats_prog, &bn_cfg, (
-            x_nc_buf.as_device_ptr() as *mut f32,
-            mean_buf.as_device_ptr() as *mut f32,
-            rstd_buf.as_device_ptr() as *mut f32,
-            rm_buf.as_device_ptr()   as *mut f32,
-            rv_buf.as_device_ptr()   as *mut f32,
-            N_BN as i32, C_OUT as i32, BN_EPS, BN_MOMENTUM,
-        ))?;
+        device.launch(
+            &stats_prog,
+            &bn_cfg,
+            (
+                x_nc_buf.as_device_ptr(),
+                mean_buf.as_device_ptr(),
+                rstd_buf.as_device_ptr(),
+                rm_buf.as_device_ptr(),
+                rv_buf.as_device_ptr(),
+                N_BN as i32,
+                C_OUT as i32,
+                BN_EPS,
+                BN_MOMENTUM,
+            ),
+        )?;
 
         // ── Stage 2b: BatchNorm normalize ────────────────────────────────────────
         let mut w_bn_buf = device.buffer::<f32>(C_OUT)?;
         let mut b_bn_buf = device.buffer::<f32>(C_OUT)?;
-        let     y_bn_buf = device.buffer::<f32>(N_OUT)?;
+        let y_bn_buf = device.buffer::<f32>(N_OUT)?;
 
         w_bn_buf.to_device(&bn_weight)?;
         b_bn_buf.to_device(&bn_bias)?;
@@ -209,21 +226,27 @@ mod cuda {
             teeny_kernels::nn::norm::batchnorm::BatchNormNormalizeForward<f32>,
         >(&norm_ptx)?;
 
-        device.launch(&norm_prog, &bn_cfg, (
-            x_nc_buf.as_device_ptr() as *mut f32,
-            y_bn_buf.as_device_ptr() as *mut f32,
-            w_bn_buf.as_device_ptr() as *mut f32,
-            b_bn_buf.as_device_ptr() as *mut f32,
-            mean_buf.as_device_ptr() as *mut f32,
-            rstd_buf.as_device_ptr() as *mut f32,
-            N_BN as i32, C_OUT as i32,
-        ))?;
+        device.launch(
+            &norm_prog,
+            &bn_cfg,
+            (
+                x_nc_buf.as_device_ptr(),
+                y_bn_buf.as_device_ptr(),
+                w_bn_buf.as_device_ptr(),
+                b_bn_buf.as_device_ptr(),
+                mean_buf.as_device_ptr(),
+                rstd_buf.as_device_ptr(),
+                N_BN as i32,
+                C_OUT as i32,
+            ),
+        )?;
 
         // ── Stage 3: SiLU ────────────────────────────────────────────────────────
         // Element-wise — operates directly on the NC layout from BN.
         let y_silu_buf = device.buffer::<f32>(N_OUT)?;
 
-        let silu_kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU);
+        let silu_kernel =
+            teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU);
         let silu_ptx = std::fs::read(compile_kernel(&silu_kernel, &target, true, false)?)?;
         let silu_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
@@ -233,8 +256,8 @@ mod cuda {
             &silu_prog,
             &testing::launch_config(N_OUT, BLOCK_SILU),
             (
-                y_bn_buf.as_device_ptr()   as *mut f32,
-                y_silu_buf.as_device_ptr() as *mut f32,
+                y_bn_buf.as_device_ptr(),
+                y_silu_buf.as_device_ptr(),
                 N_OUT as i32,
             ),
         )?;

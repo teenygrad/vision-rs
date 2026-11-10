@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 //! Flash Attention 2 — forward and backward kernels.
 //!
 //! **Layout**: all tensors are stored as `[BATCH * N_HEADS, N_CTX, HEAD_DIM]`
@@ -80,7 +79,13 @@ pub fn flash_attention2_forward<T: Triton, D: Float, const HEAD_DIM: i32>(
     // Load Q[pid_bh, pid_m, :]
     let q_vec = T::load(
         q_ptr.add_offsets(d + q_row_base),
-        None, None, &[], None, None, None, false,
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
     );
 
     // Online-softmax running state — all kept as [HEAD_DIM] tensors so that
@@ -93,8 +98,26 @@ pub fn flash_attention2_forward<T: Triton, D: Float, const HEAD_DIM: i32>(
     for k_row in 0..n_ctx_k {
         let kv_row_base = kv_bh_base + k_row * HEAD_DIM;
 
-        let k_vec = T::load(k_ptr.add_offsets(d + kv_row_base), None, None, &[], None, None, None, false);
-        let v_vec = T::load(v_ptr.add_offsets(d + kv_row_base), None, None, &[], None, None, None, false);
+        let k_vec = T::load(
+            k_ptr.add_offsets(d + kv_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let v_vec = T::load(
+            v_ptr.add_offsets(d + kv_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
 
         // Scaled dot-product: score = sum(q · k) * scale  → [HD] (scalar replicated)
         let qk = T::sum(q_vec * k_vec, Some(0), true) * scale_t;
@@ -116,8 +139,22 @@ pub fn flash_attention2_forward<T: Triton, D: Float, const HEAD_DIM: i32>(
     let l_save_sum = T::sum(m_i + T::log(l_i), Some(0), false); // scalar f32
     let l_save = l_save_sum / T::full(&[1], D::from_f64(HEAD_DIM as f64)); // tensor<1xD>
 
-    T::store(o_ptr.add_offsets(d + o_row_base), o_row, None, &[], None, None);
-    T::store(l_ptr.add_offsets(T::arange(0, 1) + l_row_base), l_save, None, &[], None, None);
+    T::store(
+        o_ptr.add_offsets(d + o_row_base),
+        o_row,
+        None,
+        &[],
+        None,
+        None,
+    );
+    T::store(
+        l_ptr.add_offsets(T::arange(0, 1) + l_row_base),
+        l_save,
+        None,
+        &[],
+        None,
+        None,
+    );
 }
 
 // ── Backward — dQ ─────────────────────────────────────────────────────────────
@@ -152,15 +189,51 @@ pub fn flash_attention2_backward_dq<T: Triton, D: Float, const HEAD_DIM: i32>(
     let d = T::arange(0, HEAD_DIM);
     let scale_t = T::full(&[HEAD_DIM], D::from_f64(softmax_scale as f64));
 
-    let q_vec  = T::load(q_ptr.add_offsets(d + q_row_base),  None, None, &[], None, None, None, false);
-    let o_vec  = T::load(o_ptr.add_offsets(d + q_row_base),  None, None, &[], None, None, None, false);
-    let do_vec = T::load(do_ptr.add_offsets(d + q_row_base), None, None, &[], None, None, None, false);
+    let q_vec = T::load(
+        q_ptr.add_offsets(d + q_row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let o_vec = T::load(
+        o_ptr.add_offsets(d + q_row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let do_vec = T::load(
+        do_ptr.add_offsets(d + q_row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     // D_q = rowsum(O_q * dO_q)  — scalar
     let d_q = T::sum(o_vec * do_vec, Some(0), false);
 
     // Load logsumexp L_q (scalar stored as 1-element vec); reduce to scalar.
-    let l_q_raw = T::load(l_ptr.add_offsets(T::arange(0, 1) + l_row_base), None, None, &[], None, None, None, false);
+    let l_q_raw = T::load(
+        l_ptr.add_offsets(T::arange(0, 1) + l_row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
     let l_q = T::sum(l_q_raw, Some(0), false); // scalar
 
     let mut dq_acc = T::zeros::<D>(&[HEAD_DIM]);
@@ -168,8 +241,26 @@ pub fn flash_attention2_backward_dq<T: Triton, D: Float, const HEAD_DIM: i32>(
     for k_row in 0..n_ctx_k {
         let kv_row_base = kv_bh_base + k_row * HEAD_DIM;
 
-        let k_vec = T::load(k_ptr.add_offsets(d + kv_row_base), None, None, &[], None, None, None, false);
-        let v_vec = T::load(v_ptr.add_offsets(d + kv_row_base), None, None, &[], None, None, None, false);
+        let k_vec = T::load(
+            k_ptr.add_offsets(d + kv_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let v_vec = T::load(
+            v_ptr.add_offsets(d + kv_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
 
         // Recompute attention weight: p = exp(qk * scale - L_q)
         let qk = T::sum(q_vec * k_vec, Some(0), false) * scale_t;
@@ -183,7 +274,14 @@ pub fn flash_attention2_backward_dq<T: Triton, D: Float, const HEAD_DIM: i32>(
         dq_acc = dq_acc + ds * k_vec * scale_t;
     }
 
-    T::store(dq_ptr.add_offsets(d + q_row_base), dq_acc, None, &[], None, None);
+    T::store(
+        dq_ptr.add_offsets(d + q_row_base),
+        dq_acc,
+        None,
+        &[],
+        None,
+        None,
+    );
 }
 
 // ── Backward — dK / dV ────────────────────────────────────────────────────────
@@ -220,8 +318,26 @@ pub fn flash_attention2_backward_dkv<T: Triton, D: Float, const HEAD_DIM: i32>(
     let scale_t = T::full(&[HEAD_DIM], D::from_f64(softmax_scale as f64));
 
     // Load K_n and V_n — fixed for this CTA.
-    let k_vec = T::load(k_ptr.add_offsets(d + kv_row_base), None, None, &[], None, None, None, false);
-    let v_vec = T::load(v_ptr.add_offsets(d + kv_row_base), None, None, &[], None, None, None, false);
+    let k_vec = T::load(
+        k_ptr.add_offsets(d + kv_row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let v_vec = T::load(
+        v_ptr.add_offsets(d + kv_row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     let mut dk_acc = T::zeros::<D>(&[HEAD_DIM]);
     let mut dv_acc = T::zeros::<D>(&[HEAD_DIM]);
@@ -230,11 +346,47 @@ pub fn flash_attention2_backward_dkv<T: Triton, D: Float, const HEAD_DIM: i32>(
         let q_row_base = q_bh_base + q_row * HEAD_DIM;
         let l_row_base = l_bh_base + q_row;
 
-        let q_vec_m  = T::load(q_ptr.add_offsets(d + q_row_base),  None, None, &[], None, None, None, false);
-        let o_vec_m  = T::load(o_ptr.add_offsets(d + q_row_base),  None, None, &[], None, None, None, false);
-        let do_vec_m = T::load(do_ptr.add_offsets(d + q_row_base), None, None, &[], None, None, None, false);
+        let q_vec_m = T::load(
+            q_ptr.add_offsets(d + q_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let o_vec_m = T::load(
+            o_ptr.add_offsets(d + q_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let do_vec_m = T::load(
+            do_ptr.add_offsets(d + q_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
         // Load logsumexp L_m; reduce tensor<1xf32> to scalar.
-        let l_m_raw  = T::load(l_ptr.add_offsets(T::arange(0, 1) + l_row_base), None, None, &[], None, None, None, false);
+        let l_m_raw = T::load(
+            l_ptr.add_offsets(T::arange(0, 1) + l_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
         let l_m = T::sum(l_m_raw, Some(0), false); // scalar f32
 
         // D_m = rowsum(O_m * dO_m) — scalar
@@ -255,8 +407,22 @@ pub fn flash_attention2_backward_dkv<T: Triton, D: Float, const HEAD_DIM: i32>(
         dk_acc = dk_acc + ds * q_vec_m * scale_t;
     }
 
-    T::store(dk_ptr.add_offsets(d + kv_row_base), dk_acc, None, &[], None, None);
-    T::store(dv_ptr.add_offsets(d + kv_row_base), dv_acc, None, &[], None, None);
+    T::store(
+        dk_ptr.add_offsets(d + kv_row_base),
+        dk_acc,
+        None,
+        &[],
+        None,
+        None,
+    );
+    T::store(
+        dv_ptr.add_offsets(d + kv_row_base),
+        dv_acc,
+        None,
+        &[],
+        None,
+        None,
+    );
 }
 
 // ── Op wrapper ────────────────────────────────────────────────────────────────

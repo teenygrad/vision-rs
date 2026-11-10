@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 //! YOLO26 Detect head.
 //!
 //! Implements `ultralytics.nn.modules.head.Detect(nc, ch)` with `reg_max=1`.
@@ -24,7 +23,11 @@
 //!   `cv3[i]`: DWConv(c_in,3,1) → Conv(c_in,c3,1,1) → DWConv(c3,3,1) → Conv(c3,c3,1,1)
 //!           → Conv2d(c3,nc,1,bias=True)
 
-use teeny_core::{dtype::Float, graph::{Op, SymTensor}, name_scope::name_scope};
+use teeny_core::{
+    dtype::Float,
+    graph::{Op, SymTensor},
+    name_scope::name_scope,
+};
 
 use super::conv::{conv, conv_plain, dwconv};
 
@@ -60,12 +63,9 @@ pub struct DualDetectOutput {
 /// This matches the `torch.cat([t.view(B, C, -1) for t in ...], dim=-1)` pattern
 /// used in the ultralytics Detect head forward pass.
 fn channel_cat_flat(tensors: Vec<SymTensor>) -> SymTensor {
-    let c_total: usize = tensors.iter()
-        .map(|t| {
-            t.shape[1].unwrap_or(0)
-                * t.shape[2].unwrap_or(1)
-                * t.shape[3].unwrap_or(1)
-        })
+    let c_total: usize = tensors
+        .iter()
+        .map(|t| t.shape[1].unwrap_or(0) * t.shape[2].unwrap_or(1) * t.shape[3].unwrap_or(1))
         .sum();
     let first = &tensors[0];
     let shape = vec![first.shape[0], Some(c_total), Some(1), Some(1)];
@@ -76,7 +76,12 @@ fn channel_cat_flat(tensors: Vec<SymTensor>) -> SymTensor {
         first.dtype,
         shape.clone(),
     );
-    SymTensor { node_id, graph: first.graph.clone(), dtype: first.dtype, shape }
+    SymTensor {
+        node_id,
+        graph: first.graph.clone(),
+        dtype: first.dtype,
+        shape,
+    }
 }
 
 // ── Detect head ───────────────────────────────────────────────────────────────
@@ -115,7 +120,7 @@ pub fn detect<D: Float + 'static>(
     let c3 = ch[0].max(nc.min(100));
     let (cv2_prefix, cv3_prefix) = match head {
         DetectHead::OneToMany => ("cv2", "cv3"),
-        DetectHead::OneToOne  => ("one2one_cv2", "one2one_cv3"),
+        DetectHead::OneToOne => ("one2one_cv2", "one2one_cv3"),
     };
 
     // cv2[i]: Conv(c_in→c2,3) → Conv(c2→c2,3) → Conv2d(c2→4,1,bias)
@@ -126,9 +131,18 @@ pub fn detect<D: Float + 'static>(
             let l2 = conv::<D>(c2, c2, 3, 1);
             let l3 = conv_plain::<D>(c2, 4 * reg_max, 1, 1);
             Box::new(move |x: SymTensor| {
-                let x = { let _g = name_scope("0"); l1(x) };
-                let x = { let _g = name_scope("1"); l2(x) };
-                { let _g = name_scope("2"); l3(x) }
+                let x = {
+                    let _g = name_scope("0");
+                    l1(x)
+                };
+                let x = {
+                    let _g = name_scope("1");
+                    l2(x)
+                };
+                {
+                    let _g = name_scope("2");
+                    l3(x)
+                }
             }) as Box<dyn Fn(SymTensor) -> SymTensor>
         })
         .collect();
@@ -145,27 +159,52 @@ pub fn detect<D: Float + 'static>(
             let pw2 = conv::<D>(c3, c3, 1, 1);
             let out = conv_plain::<D>(c3, nc, 1, 1);
             Box::new(move |x: SymTensor| {
-                let x = { let _g = name_scope("0.0"); dw1(x) };
-                let x = { let _g = name_scope("0.1"); pw1(x) };
-                let x = { let _g = name_scope("1.0"); dw2(x) };
-                let x = { let _g = name_scope("1.1"); pw2(x) };
-                { let _g = name_scope("2"); out(x) }
+                let x = {
+                    let _g = name_scope("0.0");
+                    dw1(x)
+                };
+                let x = {
+                    let _g = name_scope("0.1");
+                    pw1(x)
+                };
+                let x = {
+                    let _g = name_scope("1.0");
+                    dw2(x)
+                };
+                let x = {
+                    let _g = name_scope("1.1");
+                    pw2(x)
+                };
+                {
+                    let _g = name_scope("2");
+                    out(x)
+                }
             }) as Box<dyn Fn(SymTensor) -> SymTensor>
         })
         .collect();
 
     move |feats: Vec<SymTensor>| {
-        let box_tensors: Vec<SymTensor> = feats.iter().enumerate()
+        let box_tensors: Vec<SymTensor> = feats
+            .iter()
+            .enumerate()
             .zip(cv2.iter())
-            .map(|((i, x), f)| { let _g = name_scope(format!("{cv2_prefix}.{i}")); f(x.clone()) })
+            .map(|((i, x), f)| {
+                let _g = name_scope(format!("{cv2_prefix}.{i}"));
+                f(x.clone())
+            })
             .collect();
 
-        let cls_tensors: Vec<SymTensor> = feats.iter().enumerate()
+        let cls_tensors: Vec<SymTensor> = feats
+            .iter()
+            .enumerate()
             .zip(cv3.iter())
-            .map(|((i, x), f)| { let _g = name_scope(format!("{cv3_prefix}.{i}")); f(x.clone()) })
+            .map(|((i, x), f)| {
+                let _g = name_scope(format!("{cv3_prefix}.{i}"));
+                f(x.clone())
+            })
             .collect();
 
-        let boxes  = channel_cat_flat(box_tensors);
+        let boxes = channel_cat_flat(box_tensors);
         let scores = channel_cat_flat(cls_tensors);
 
         DetectOutput { boxes, scores }
