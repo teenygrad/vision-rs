@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Softmax over the class-score dimension of a YOLOv8 P5 detection head.
 //
 // Layout: (batch=2, anchors=20×20) × (n_cols=128) — 80 COCO classes padded
@@ -25,8 +24,8 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_core::device::{Device, buffer::Buffer};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
     use teeny_cuda::{device::CudaLaunchConfig, errors::Result};
     use teeny_test::cuda as testing;
 
@@ -70,7 +69,12 @@ mod cuda {
         x_buf.to_device(&x_host)?;
 
         let kernel = teeny_kernels::nn::activation::softmax::SoftmaxForward::<f32>::new(BLOCK_SIZE);
-        let ptx = std::fs::read(compile_kernel(&kernel, &Target::new(env.capability), true, false)?)?;
+        let ptx = std::fs::read(compile_kernel(
+            &kernel,
+            &Target::new(env.capability),
+            true,
+            false,
+        )?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::softmax::SoftmaxForward<f32>,
         >(&ptx)?;
@@ -127,7 +131,12 @@ mod cuda {
 
         let kernel =
             teeny_kernels::nn::activation::softmax::SoftmaxBackward::<f32>::new(BLOCK_SIZE);
-        let ptx = std::fs::read(compile_kernel(&kernel, &Target::new(env.capability), true, false)?)?;
+        let ptx = std::fs::read(compile_kernel(
+            &kernel,
+            &Target::new(env.capability),
+            true,
+            false,
+        )?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::softmax::SoftmaxBackward<f32>,
         >(&ptx)?;

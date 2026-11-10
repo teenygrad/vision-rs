@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Graph-level tests for the SPPF block.
 //
 // SPPF architecture:
@@ -32,13 +31,17 @@ use teeny_core::graph::{DtypeRepr, Op, SymTensor};
 use vision_rs::models::yolo::yolo26::blocks::sppf::sppf;
 
 fn sym_input(c: usize, h: usize, w: usize) -> SymTensor {
-    let (t, _graph) =
-        SymTensor::input(DtypeRepr::F32, vec![Some(2), Some(c), Some(h), Some(w)]);
+    let (t, _graph) = SymTensor::input(DtypeRepr::F32, vec![Some(2), Some(c), Some(h), Some(w)]);
     t
 }
 
 fn count_op(y: &SymTensor, pred: impl Fn(&Op) -> bool) -> usize {
-    y.graph.borrow().nodes.iter().filter(|n| pred(&n.op)).count()
+    y.graph
+        .borrow()
+        .nodes
+        .iter()
+        .filter(|n| pred(&n.op))
+        .count()
 }
 
 // ── Shape tests ───────────────────────────────────────────────────────────────

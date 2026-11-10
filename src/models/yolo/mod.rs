@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 /// GPU kernels used by the YOLO26 model (attention, detection decode, loss).
 pub mod kernels;
 /// Training loss functions for YOLO26 (anchor assignment, CIoU, classification).

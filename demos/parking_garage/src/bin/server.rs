@@ -96,8 +96,14 @@ fn parse_xml_spaces(xml: &str) -> Result<Vec<Space>> {
         if !node.has_tag_name("space") {
             continue;
         }
-        let id = node.attribute("id").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-        let occupied = node.attribute("occupied").map(|v| v != "0").unwrap_or(false);
+        let id = node
+            .attribute("id")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        let occupied = node
+            .attribute("occupied")
+            .map(|v| v != "0")
+            .unwrap_or(false);
 
         // Prefer contour (4 rotated corners) for exact AABB.
         // Some dataset files use <Point> (capital P) — match case-insensitively.
@@ -105,9 +111,10 @@ fn parse_xml_spaces(xml: &str) -> Result<Vec<Space>> {
         let mut ys: Vec<f64> = Vec::new();
 
         if let Some(contour) = node.children().find(|n| n.has_tag_name("contour")) {
-            for pt in contour.children().filter(|n| {
-                n.tag_name().name().eq_ignore_ascii_case("point")
-            }) {
+            for pt in contour
+                .children()
+                .filter(|n| n.tag_name().name().eq_ignore_ascii_case("point"))
+            {
                 if let (Some(x), Some(y)) = (
                     pt.attribute("x").and_then(|v| v.parse().ok()),
                     pt.attribute("y").and_then(|v| v.parse().ok()),
@@ -122,19 +129,29 @@ fn parse_xml_spaces(xml: &str) -> Result<Vec<Space>> {
         // is correct even for heavily-angled spaces (side rows of the lot).
         if xs.is_empty() {
             if let Some(rr) = node.children().find(|n| n.has_tag_name("rotatedRect")) {
-                let cx = rr.children().find(|n| n.has_tag_name("center"))
+                let cx = rr
+                    .children()
+                    .find(|n| n.has_tag_name("center"))
                     .and_then(|c| c.attribute("x").and_then(|v| v.parse::<f64>().ok()))
                     .unwrap_or(0.0);
-                let cy = rr.children().find(|n| n.has_tag_name("center"))
+                let cy = rr
+                    .children()
+                    .find(|n| n.has_tag_name("center"))
                     .and_then(|c| c.attribute("y").and_then(|v| v.parse::<f64>().ok()))
                     .unwrap_or(0.0);
-                let w = rr.children().find(|n| n.has_tag_name("size"))
+                let w = rr
+                    .children()
+                    .find(|n| n.has_tag_name("size"))
                     .and_then(|s| s.attribute("w").and_then(|v| v.parse::<f64>().ok()))
                     .unwrap_or(0.0);
-                let h = rr.children().find(|n| n.has_tag_name("size"))
+                let h = rr
+                    .children()
+                    .find(|n| n.has_tag_name("size"))
                     .and_then(|s| s.attribute("h").and_then(|v| v.parse::<f64>().ok()))
                     .unwrap_or(0.0);
-                let angle_deg = rr.children().find(|n| n.has_tag_name("angle"))
+                let angle_deg = rr
+                    .children()
+                    .find(|n| n.has_tag_name("angle"))
                     .and_then(|a| a.attribute("d").and_then(|v| v.parse::<f64>().ok()))
                     .unwrap_or(0.0);
                 let (sin_a, cos_a) = angle_deg.to_radians().sin_cos();
@@ -195,9 +212,7 @@ fn load_lot(lot_dir: &Path) -> Result<Lot> {
             let mut entries: Vec<_> = std::fs::read_dir(&date_dir)
                 .with_context(|| format!("reading {}", date_dir.display()))?
                 .filter_map(|e| e.ok())
-                .filter(|e| {
-                    e.path().extension().and_then(|x| x.to_str()) == Some("jpg")
-                })
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("jpg"))
                 .collect();
             entries.sort_by_key(|e| e.file_name());
 
@@ -213,10 +228,18 @@ fn load_lot(lot_dir: &Path) -> Result<Lot> {
         }
     }
 
-    anyhow::ensure!(!images.is_empty(), "no images found under {}", lot_dir.display());
+    anyhow::ensure!(
+        !images.is_empty(),
+        "no images found under {}",
+        lot_dir.display()
+    );
 
     println!("lot {:>8}: {} images", name, images.len());
-    Ok(Lot { name, images, cursor: 0 })
+    Ok(Lot {
+        name,
+        images,
+        cursor: 0,
+    })
 }
 
 /// Source archive for the PKLot dataset: an unmodified mirror of the original UFPR VRI lab
@@ -244,7 +267,11 @@ fn sha256_hex(path: &Path) -> Result<String> {
         .arg(path)
         .output()
         .context("running sha256sum")?;
-    anyhow::ensure!(output.status.success(), "sha256sum exited with {}", output.status);
+    anyhow::ensure!(
+        output.status.success(),
+        "sha256sum exited with {}",
+        output.status
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     stdout
         .split_whitespace()
@@ -280,10 +307,14 @@ fn ensure_dataset(root: &Path) -> Result<()> {
                 root.display()
             )
         })?;
-    std::fs::create_dir_all(extract_into).with_context(|| format!("creating {}", extract_into.display()))?;
+    std::fs::create_dir_all(extract_into)
+        .with_context(|| format!("creating {}", extract_into.display()))?;
 
     let tarball = extract_into.join("PKLot.tar.gz");
-    println!("dataset not found at {}; downloading from {PKLOT_URL} (CC BY 4.0, ~4.6GB) …", root.display());
+    println!(
+        "dataset not found at {}; downloading from {PKLOT_URL} (CC BY 4.0, ~4.6GB) …",
+        root.display()
+    );
 
     let pb = ProgressBar::new(PKLOT_SIZE_BYTES);
     pb.set_style(
@@ -295,7 +326,9 @@ fn ensure_dataset(root: &Path) -> Result<()> {
     let mut verified = false;
     for attempt in 1..=PKLOT_MAX_ATTEMPTS {
         if attempt > 1 {
-            pb.println(format!("retrying download (attempt {attempt}/{PKLOT_MAX_ATTEMPTS}) …"));
+            pb.println(format!(
+                "retrying download (attempt {attempt}/{PKLOT_MAX_ATTEMPTS}) …"
+            ));
         }
 
         // `-C -` resumes from wherever a previous attempt left off (curl auto-detects the
@@ -305,7 +338,17 @@ fn ensure_dataset(root: &Path) -> Result<()> {
         // curl's own progress meter since we're driving our own bar below (polling the partial
         // file's size on disk, which also naturally reflects a resumed attempt's starting point).
         let mut child = std::process::Command::new("curl")
-            .args(["-sfL", "--retry", "5", "--retry-delay", "5", "--retry-all-errors", "-C", "-", "-o"])
+            .args([
+                "-sfL",
+                "--retry",
+                "5",
+                "--retry-delay",
+                "5",
+                "--retry-all-errors",
+                "-C",
+                "-",
+                "-o",
+            ])
             .arg(&tarball)
             .arg(PKLOT_URL)
             .spawn()
@@ -411,7 +454,6 @@ fn parse_timestamp(filename: &str) -> String {
 #[cfg(any(feature = "cuda", feature = "riscv"))]
 const VEHICLE_CLASSES: &[usize] = &[2, 5, 7]; // COCO: car, bus, truck
 
-
 // Letterbox-resize image to img_size × img_size, normalise to [0,1], return NCHW f32.
 #[cfg(any(feature = "cuda", feature = "riscv"))]
 fn preprocess_image_raw(img: &image::RgbImage, img_size: usize) -> Vec<f32> {
@@ -440,12 +482,15 @@ fn preprocess_image_raw(img: &image::RgbImage, img_size: usize) -> Vec<f32> {
 // IoU of two CxCyWH normalised boxes.
 #[cfg(any(feature = "cuda", feature = "riscv"))]
 fn box_iou_cxcywh(a: [f32; 4], b: [f32; 4]) -> f32 {
-    let ax1 = a[0] - a[2] * 0.5; let ax2 = a[0] + a[2] * 0.5;
-    let ay1 = a[1] - a[3] * 0.5; let ay2 = a[1] + a[3] * 0.5;
-    let bx1 = b[0] - b[2] * 0.5; let bx2 = b[0] + b[2] * 0.5;
-    let by1 = b[1] - b[3] * 0.5; let by2 = b[1] + b[3] * 0.5;
-    let inter = (ax2.min(bx2) - ax1.max(bx1)).max(0.0)
-              * (ay2.min(by2) - ay1.max(by1)).max(0.0);
+    let ax1 = a[0] - a[2] * 0.5;
+    let ax2 = a[0] + a[2] * 0.5;
+    let ay1 = a[1] - a[3] * 0.5;
+    let ay2 = a[1] + a[3] * 0.5;
+    let bx1 = b[0] - b[2] * 0.5;
+    let bx2 = b[0] + b[2] * 0.5;
+    let by1 = b[1] - b[3] * 0.5;
+    let by2 = b[1] + b[3] * 0.5;
+    let inter = (ax2.min(bx2) - ax1.max(bx1)).max(0.0) * (ay2.min(by2) - ay1.max(by1)).max(0.0);
     let union = a[2] * a[3] + b[2] * b[3] - inter;
     inter / (union + 1e-7)
 }
@@ -520,16 +565,22 @@ fn load_weights_for_model(model: &mut impl ParamStore, path: &Path) -> Result<()
 
     let named_params: Vec<(String, usize, usize)> = model.named_params();
     if named_params.is_empty() {
-        println!("warning: 0 named params — optimise() may have dropped node names; weights not loaded");
+        println!(
+            "warning: 0 named params — optimise() may have dropped node names; weights not loaded"
+        );
         return Ok(());
     }
 
     let load_f32 = |key: &str| -> Result<Vec<f32>> {
-        let tv = tensors.tensor(key)
+        let tv = tensors
+            .tensor(key)
             .map_err(|_| anyhow::anyhow!("key '{}' not found", key))?;
         let bytes = tv.data();
         anyhow::ensure!(bytes.len() % 4 == 0, "tensor '{}' not f32", key);
-        Ok(bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+        Ok(bytes
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect())
     };
 
     let mut loaded = 0usize;
@@ -538,11 +589,19 @@ fn load_weights_for_model(model: &mut impl ParamStore, path: &Path) -> Result<()
     for (key, node_idx, param_idx) in &named_params {
         if key.ends_with(".bn_scale") {
             let prefix = &key[..key.len() - ".bn_scale".len()];
-            match (load_f32(&format!("{prefix}.bn.weight")), load_f32(&format!("{prefix}.bn.running_var"))) {
+            match (
+                load_f32(&format!("{prefix}.bn.weight")),
+                load_f32(&format!("{prefix}.bn.running_var")),
+            ) {
                 (Ok(gamma), Ok(var)) => {
                     let eps = 1e-3f32;
-                    let v: Vec<f32> = gamma.iter().zip(var.iter()).map(|(&g, &v)| g / (v + eps).sqrt()).collect();
-                    model.upload(*node_idx, *param_idx, &v)
+                    let v: Vec<f32> = gamma
+                        .iter()
+                        .zip(var.iter())
+                        .map(|(&g, &v)| g / (v + eps).sqrt())
+                        .collect();
+                    model
+                        .upload(*node_idx, *param_idx, &v)
                         .with_context(|| format!("uploading bn_scale '{key}'"))?;
                     loaded += 1;
                 }
@@ -561,10 +620,15 @@ fn load_weights_for_model(model: &mut impl ParamStore, path: &Path) -> Result<()
             ) {
                 (Ok(beta), Ok(gamma), Ok(mean), Ok(var)) => {
                     let eps = 1e-3f32;
-                    let v: Vec<f32> = beta.iter().zip(gamma.iter()).zip(mean.iter()).zip(var.iter())
+                    let v: Vec<f32> = beta
+                        .iter()
+                        .zip(gamma.iter())
+                        .zip(mean.iter())
+                        .zip(var.iter())
                         .map(|(((&b, &g), &m), &vv)| b - (g / (vv + eps).sqrt()) * m)
                         .collect();
-                    model.upload(*node_idx, *param_idx, &v)
+                    model
+                        .upload(*node_idx, *param_idx, &v)
                         .with_context(|| format!("uploading bn_shift '{key}'"))?;
                     loaded += 1;
                 }
@@ -585,9 +649,12 @@ fn load_weights_for_model(model: &mut impl ParamStore, path: &Path) -> Result<()
             Ok(tv) => {
                 let bytes = tv.data();
                 anyhow::ensure!(bytes.len() % 4 == 0, "tensor '{key}': not f32");
-                let data: Vec<f32> = bytes.chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-                model.upload(*node_idx, *param_idx, &data)
+                let data: Vec<f32> = bytes
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                model
+                    .upload(*node_idx, *param_idx, &data)
                     .with_context(|| format!("uploading '{key}'"))?;
                 loaded += 1;
             }
@@ -596,11 +663,20 @@ fn load_weights_for_model(model: &mut impl ParamStore, path: &Path) -> Result<()
     }
 
     if !missing.is_empty() {
-        println!("warning: {}/{} params not found (showing first 5):", missing.len(), named_params.len());
-        for k in missing.iter().take(5) { println!("  missing: {k}"); }
+        println!(
+            "warning: {}/{} params not found (showing first 5):",
+            missing.len(),
+            named_params.len()
+        );
+        for k in missing.iter().take(5) {
+            println!("  missing: {k}");
+        }
     }
-    println!("loaded {loaded}/{} named params from {}", named_params.len(),
-        path.file_name().unwrap_or_default().to_string_lossy());
+    println!(
+        "loaded {loaded}/{} named params from {}",
+        named_params.len(),
+        path.file_name().unwrap_or_default().to_string_lossy()
+    );
     Ok(())
 }
 
@@ -618,7 +694,10 @@ fn build_infer_fn(
         yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26},
     };
 
-    let name = Path::new(model_spec).file_name().and_then(|n| n.to_str()).unwrap_or(model_spec);
+    let name = Path::new(model_spec)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(model_spec);
     let (nc, variant) = if name.ends_with("xl") {
         (80usize, Yolo26Variant::XL)
     } else {
@@ -627,7 +706,10 @@ fn build_infer_fn(
             Some('s') => (80, Yolo26Variant::S),
             Some('m') => (80, Yolo26Variant::M),
             Some('l') => (80, Yolo26Variant::L),
-            _ => anyhow::bail!("cannot infer variant from '{}'; expected suffix n/s/m/l/xl", name),
+            _ => anyhow::bail!(
+                "cannot infer variant from '{}'; expected suffix n/s/m/l/xl",
+                name
+            ),
         }
     };
 
@@ -650,8 +732,10 @@ fn build_infer_fn(
         })?;
     }
 
-    println!("compiling YOLO26{} (nc={nc}, {img_size}×{img_size}) — first run builds kernel cache …",
-        format!("{variant:?}").to_uppercase());
+    println!(
+        "compiling YOLO26{} (nc={nc}, {img_size}×{img_size}) — first run builds kernel cache …",
+        format!("{variant:?}").to_uppercase()
+    );
 
     let (input_sym, _graph_rc) = SymTensor::input(
         DtypeRepr::F32,
@@ -668,25 +752,45 @@ fn build_infer_fn(
 
     let grid = AnchorGrid::yolo26(img_size, img_size);
     let a = grid.n_anchors;
-    let a_per_scale: Vec<usize> = [8usize, 16, 32].iter().map(|&s| (img_size / s).pow(2)).collect();
+    let a_per_scale: Vec<usize> = [8usize, 16, 32]
+        .iter()
+        .map(|&s| (img_size / s).pow(2))
+        .collect();
     let box_off: Vec<usize> = {
-        let mut o = vec![0usize]; for &n in &a_per_scale { o.push(o.last().unwrap() + 4 * n); } o
+        let mut o = vec![0usize];
+        for &n in &a_per_scale {
+            o.push(o.last().unwrap() + 4 * n);
+        }
+        o
     };
     let score_off: Vec<usize> = {
-        let mut o = vec![0usize]; for &n in &a_per_scale { o.push(o.last().unwrap() + nc * n); } o
+        let mut o = vec![0usize];
+        for &n in &a_per_scale {
+            o.push(o.last().unwrap() + nc * n);
+        }
+        o
     };
     let anchor_base: Vec<usize> = {
-        let mut o = vec![0usize]; for &n in &a_per_scale { o.push(o.last().unwrap() + n); } o
+        let mut o = vec![0usize];
+        for &n in &a_per_scale {
+            o.push(o.last().unwrap() + n);
+        }
+        o
     };
-    let anchor_scale: Vec<(usize, usize)> = a_per_scale.iter().enumerate()
-        .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j))).collect();
+    let anchor_scale: Vec<(usize, usize)> = a_per_scale
+        .iter()
+        .enumerate()
+        .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j)))
+        .collect();
 
     let grid_cx = grid.cx;
     let grid_cy = grid.cy;
     let grid_strides = grid.strides;
 
     let f = move |path: &Path| -> Result<Vec<(usize, f32, [f32; 4])>> {
-        let img = image::open(path).with_context(|| format!("opening {:?}", path))?.to_rgb8();
+        let img = image::open(path)
+            .with_context(|| format!("opening {:?}", path))?
+            .to_rgb8();
         let (orig_w, orig_h) = (img.width() as usize, img.height() as usize);
         let pixels = preprocess_image_raw(&img, img_size);
 
@@ -700,13 +804,18 @@ fn build_infer_fn(
             let bb = box_off[si];
             let ab = anchor_base[si];
             for j in 0..a_s {
-                let (l, t, r, b) = (ltrb[bb+j], ltrb[bb+a_s+j], ltrb[bb+2*a_s+j], ltrb[bb+3*a_s+j]);
+                let (l, t, r, b) = (
+                    ltrb[bb + j],
+                    ltrb[bb + a_s + j],
+                    ltrb[bb + 2 * a_s + j],
+                    ltrb[bb + 3 * a_s + j],
+                );
                 let ai = ab + j;
                 let s = grid_strides[ai];
-                xywh[ai]       = grid_cx[ai] + s * (r - l) * 0.5;
-                xywh[a + ai]   = grid_cy[ai] + s * (b - t) * 0.5;
-                xywh[2*a + ai] = s * (l + r);
-                xywh[3*a + ai] = s * (t + b);
+                xywh[ai] = grid_cx[ai] + s * (r - l) * 0.5;
+                xywh[a + ai] = grid_cy[ai] + s * (b - t) * 0.5;
+                xywh[2 * a + ai] = s * (l + r);
+                xywh[3 * a + ai] = s * (t + b);
             }
         }
 
@@ -717,22 +826,35 @@ fn build_infer_fn(
             let a_s = a_per_scale[si];
             let sb = score_off[si];
             let (best_s, best_c) = (0..nc)
-                .map(|c| { let sig = 1.0f32 / (1.0 + (-logits[sb + c*a_s + j]).exp()); (sig, c) })
-                .max_by(|(s1,_),(s2,_)| s1.partial_cmp(s2).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|c| {
+                    let sig = 1.0f32 / (1.0 + (-logits[sb + c * a_s + j]).exp());
+                    (sig, c)
+                })
+                .max_by(|(s1, _), (s2, _)| s1.partial_cmp(s2).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap();
             if best_s >= SCORE_THRESH {
-                cands.push((best_s, best_c, [xywh[ai], xywh[a+ai], xywh[2*a+ai], xywh[3*a+ai]]));
+                cands.push((
+                    best_s,
+                    best_c,
+                    [xywh[ai], xywh[a + ai], xywh[2 * a + ai], xywh[3 * a + ai]],
+                ));
             }
         }
-        cands.sort_by(|(s1,..),(s2,..)| s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal));
+        cands.sort_by(|(s1, ..), (s2, ..)| s2.partial_cmp(s1).unwrap_or(std::cmp::Ordering::Equal));
 
         const NMS_THRESH: f32 = 0.65;
         let mut suppressed = vec![false; cands.len()];
         for i in 0..cands.len() {
-            if suppressed[i] { continue; }
-            for jj in (i+1)..cands.len() {
-                if suppressed[jj] || cands[i].1 != cands[jj].1 { continue; }
-                if box_iou_cxcywh(cands[i].2, cands[jj].2) > NMS_THRESH { suppressed[jj] = true; }
+            if suppressed[i] {
+                continue;
+            }
+            for jj in (i + 1)..cands.len() {
+                if suppressed[jj] || cands[i].1 != cands[jj].1 {
+                    continue;
+                }
+                if box_iou_cxcywh(cands[i].2, cands[jj].2) > NMS_THRESH {
+                    suppressed[jj] = true;
+                }
             }
         }
 
@@ -747,8 +869,14 @@ fn build_infer_fn(
 
         let mut dets = Vec::new();
         for (i, &(score, cls, [cx, cy, w, h])) in cands.iter().enumerate() {
-            if suppressed[i] { continue; }
-            dets.push((cls, score, [(cx-lb_pad_x)/sx, (cy-lb_pad_y)/sy, w/sx, h/sy]));
+            if suppressed[i] {
+                continue;
+            }
+            dets.push((
+                cls,
+                score,
+                [(cx - lb_pad_x) / sx, (cy - lb_pad_y) / sy, w / sx, h / sy],
+            ));
         }
         Ok(dets)
     };
@@ -777,8 +905,8 @@ fn compile_model(
     use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
     use teeny_core::model::LoweringMode;
     use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
-    use teeny_test::cuda as testing;
     use teeny_kernels::graph::{Anduin, TritonLowering};
+    use teeny_test::cuda as testing;
 
     let env = testing::setup_cuda_env()?;
     let target = Target::new(env.capability);
@@ -798,8 +926,14 @@ fn compile_model(
     load_weights_for_model(&mut model, st_path)?;
     println!("model ready\n");
 
-    let (boxes_tidx, scores_tidx) = box_score_terminals(&model.terminal_node_indices_sorted_by_size())?;
-    let graph_model = model.capture_graph(&env.device, 1, &[vec![1, 3, img_size, img_size]], &[boxes_tidx, scores_tidx])?;
+    let (boxes_tidx, scores_tidx) =
+        box_score_terminals(&model.terminal_node_indices_sorted_by_size())?;
+    let graph_model = model.capture_graph(
+        &env.device,
+        1,
+        &[vec![1, 3, img_size, img_size]],
+        &[boxes_tidx, scores_tidx],
+    )?;
 
     Ok(Box::new(move |input: &[f32]| {
         let _ = (&env, &model);
@@ -823,12 +957,21 @@ fn compile_model(
 
     let device = runtime::open()?;
     let target = riscv_target(&device)?;
-    println!("backend: {} (target {})", runtime::BACKEND_NAME,
-        target.target_cpu().unwrap_or_default());
+    println!(
+        "backend: {} (target {})",
+        runtime::BACKEND_NAME,
+        target.target_cpu().unwrap_or_default()
+    );
 
     let graph = Anduin.optimize(graph)?;
     let mut model = RuntimeModel::compile(
-        &device, &graph, &TritonLowering::new(), LoweringMode::Inference, &target, 1, false,
+        &device,
+        &graph,
+        &TritonLowering::new(),
+        LoweringMode::Inference,
+        &target,
+        1,
+        false,
     )?;
     println!("compiled {} DAG nodes", model.len());
 
@@ -866,7 +1009,8 @@ fn riscv_target(
             text.lines()
                 .find_map(|line| line.strip_prefix("OPTIONS="))
                 .and_then(|opts| {
-                    opts.split(',').find_map(|kv| kv.trim().strip_prefix("capability="))
+                    opts.split(',')
+                        .find_map(|kv| kv.trim().strip_prefix("capability="))
                 })
                 .map(str::to_owned)
         });
@@ -994,7 +1138,10 @@ async fn main() -> Result<()> {
     // Matches .env.dev's own DATASETS_CACHE_DIR default, so a fresh checkout with no
     // dataset_root arg and no .env override still lands somewhere writable.
     let datasets_cache_dir = std::env::var("DATASETS_CACHE_DIR").unwrap_or_else(|_| {
-        format!("{}/.cache/vision-rs/datasets", std::env::var("HOME").unwrap_or_else(|_| ".".to_owned()))
+        format!(
+            "{}/.cache/vision-rs/datasets",
+            std::env::var("HOME").unwrap_or_else(|_| ".".to_owned())
+        )
     });
     let mut root = format!("{datasets_cache_dir}/PKLot/PKLot");
     let mut port: u16 = 3001;
@@ -1019,7 +1166,11 @@ async fn main() -> Result<()> {
 
     println!("scanning dataset at {root}");
     let mut lots = scan_lots(Path::new(&root))?;
-    println!("\nfound {} lot(s) — ticking every {}s\n", lots.len(), TICK_SECS);
+    println!(
+        "\nfound {} lot(s) — ticking every {}s\n",
+        lots.len(),
+        TICK_SECS
+    );
 
     // ── Inference setup (no-op without --features cuda or riscv) ──────────
 
@@ -1055,7 +1206,9 @@ async fn main() -> Result<()> {
     println!("API server on http://{addr}  (ws://{addr}/api/ws)\n");
 
     tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("axum server failed");
+        axum::serve(listener, app)
+            .await
+            .expect("axum server failed");
     });
 
     // ── Iteration loop ─────────────────────────────────────────────────────
@@ -1104,7 +1257,8 @@ async fn main() -> Result<()> {
                         Ok(dets) => {
                             let lat_ms = t0.elapsed().as_secs_f32() * 1000.0;
                             // Collect vehicle centers in normalised [0,1] coords.
-                            let vehicles: Vec<[f32; 2]> = dets.iter()
+                            let vehicles: Vec<[f32; 2]> = dets
+                                .iter()
                                 .filter(|(cls, _, _)| VEHICLE_CLASSES.contains(cls))
                                 .map(|(_, _, [cx, cy, _, _])| [*cx, *cy])
                                 .collect();
@@ -1113,24 +1267,32 @@ async fn main() -> Result<()> {
                                 .map(|i| (i.width() as f64, i.height() as f64))
                                 .unwrap_or((1280.0, 720.0));
                             // A space is occupied when any vehicle center falls inside it.
-                            let inf_occ = spaces.iter().filter(|s| {
-                                let [sx, sy, sw, sh] = s.bbox;
-                                vehicles.iter().any(|&[cx_n, cy_n]| {
-                                    let cx = cx_n as f64 * img_w;
-                                    let cy = cy_n as f64 * img_h;
-                                    cx >= sx && cx <= sx + sw && cy >= sy && cy <= sy + sh
+                            let inf_occ = spaces
+                                .iter()
+                                .filter(|s| {
+                                    let [sx, sy, sw, sh] = s.bbox;
+                                    vehicles.iter().any(|&[cx_n, cy_n]| {
+                                        let cx = cx_n as f64 * img_w;
+                                        let cy = cy_n as f64 * img_h;
+                                        cx >= sx && cx <= sx + sw && cy >= sy && cy <= sy + sh
+                                    })
                                 })
-                            }).count();
+                                .count();
                             Some((inf_occ, lat_ms))
                         }
-                        Err(e) => { eprintln!("inference error: {e:#}"); None }
+                        Err(e) => {
+                            eprintln!("inference error: {e:#}");
+                            None
+                        }
                     }
                 } else {
                     None
                 };
             }
             #[cfg(not(any(feature = "cuda", feature = "riscv")))]
-            { inf_info = None; }
+            {
+                inf_info = None;
+            }
 
             // ── Log ────────────────────────────────────────────────────────
             if let Some((inf_occ, lat_ms)) = inf_info {
@@ -1138,21 +1300,40 @@ async fn main() -> Result<()> {
                 stats.record(f64::from(lat_ms));
                 println!(
                     "[{:>8}] {}  gt={}/{} inf={}/{} {:.1}ms  (n={} mean={:.1} std={:.1} max={:.1}ms)",
-                    lot.name, img.filename, gt_occ, total, inf_occ, total, lat_ms,
-                    stats.count, stats.mean_ms, stats.std_ms, stats.max_ms
+                    lot.name,
+                    img.filename,
+                    gt_occ,
+                    total,
+                    inf_occ,
+                    total,
+                    lat_ms,
+                    stats.count,
+                    stats.mean_ms,
+                    stats.std_ms,
+                    stats.max_ms
                 );
             } else {
                 println!(
                     "[{:>8}] {}  total={} occupied={} free={}",
-                    lot.name, img.filename, total, gt_occ, total - gt_occ
+                    lot.name,
+                    img.filename,
+                    total,
+                    gt_occ,
+                    total - gt_occ
                 );
             }
 
             // ── Build WebSocket payload (ground-truth annotations) ─────────
-            let occupied_ids: Vec<usize> = spaces.iter()
-                .filter(|s| s.occupied).map(|s| s.id).collect();
-            let ws_spaces: Vec<SpaceInfo> = spaces.iter()
-                .map(|s| SpaceInfo { id: s.id, bbox: s.bbox, occupied: s.occupied }).collect();
+            let occupied_ids: Vec<usize> =
+                spaces.iter().filter(|s| s.occupied).map(|s| s.id).collect();
+            let ws_spaces: Vec<SpaceInfo> = spaces
+                .iter()
+                .map(|s| SpaceInfo {
+                    id: s.id,
+                    bbox: s.bbox,
+                    occupied: s.occupied,
+                })
+                .collect();
             let snapshot = ParkingLotSnapshot {
                 lot: lot.name.clone(),
                 timestamp: parse_timestamp(&img.filename),

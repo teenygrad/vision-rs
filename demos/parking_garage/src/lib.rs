@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use serde::Serialize;
 
 #[derive(Clone, Debug, Serialize)]

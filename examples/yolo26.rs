@@ -834,9 +834,12 @@ fn run_train(
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::{compile_kernel, graph::CudaGraphCompiler, target::Target}, model::{AdamwKernel, TensorRef}};
-        use teeny_test::cuda as testing;
+        use teeny_cuda::{
+            compiler::{compile_kernel, graph::CudaGraphCompiler, target::Target},
+            model::{AdamwKernel, TensorRef},
+        };
         use teeny_kernels::{graph::TritonLowering, nn::optim::adam::AdamwStep};
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
             yolo26::{Yolo26Variant, yolo26_dual},
@@ -999,7 +1002,8 @@ fn run_train(
 
         // ── 6. Compile AdamW kernel ───────────────────────────────────────────
 
-        let adamw_ptx = std::fs::read(compile_kernel(&AdamwStep::new(1024), &target, true, false)?)?;
+        let adamw_ptx =
+            std::fs::read(compile_kernel(&AdamwStep::new(1024), &target, true, false)?)?;
         let adamw = AdamwKernel::from_ptx(&adamw_ptx)?;
 
         // ── 7. Loss helper ────────────────────────────────────────────────────
@@ -1348,8 +1352,8 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
         model::LoweringMode,
     };
     use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
-    use teeny_test::cuda as testing;
     use teeny_kernels::graph::{Anduin, TritonLowering};
+    use teeny_test::cuda as testing;
     use vision_rs::models::yolo::{
         loss::anchor::AnchorGrid,
         yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26},
@@ -1643,8 +1647,8 @@ fn run_verify(
             model::LoweringMode,
         };
         use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
-        use teeny_test::cuda as testing;
         use teeny_kernels::graph::{Anduin, TritonLowering};
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
         // ── 1. Parse model config ──────────────────────────────────────────────
@@ -1796,9 +1800,12 @@ fn run_debug_train(
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef};
-        use teeny_test::cuda as testing;
+        use teeny_cuda::{
+            compiler::{graph::CudaGraphCompiler, target::Target},
+            model::TensorRef,
+        };
         use teeny_kernels::graph::TritonLowering;
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
             yolo26::{Yolo26Variant, yolo26_dual},
@@ -2134,9 +2141,12 @@ fn run_debug_infer(
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::{graph::CudaGraphCompiler, target::Target}, model::TensorRef};
-        use teeny_test::cuda as testing;
+        use teeny_cuda::{
+            compiler::{graph::CudaGraphCompiler, target::Target},
+            model::TensorRef,
+        };
         use teeny_kernels::graph::{Anduin, TritonLowering};
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
         // ── 1. Parse model config ──────────────────────────────────────────────
@@ -3045,7 +3055,15 @@ fn run_bench(
 ) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {
-        let _ = (model_spec, dataset, img_size, warmup, runs, skip_map, no_optimise);
+        let _ = (
+            model_spec,
+            dataset,
+            img_size,
+            warmup,
+            runs,
+            skip_map,
+            no_optimise,
+        );
         anyhow::bail!("bench requires the 'cuda' feature");
     }
     #[cfg(feature = "cuda")]
@@ -3057,8 +3075,8 @@ fn run_bench(
             model::LoweringMode,
         };
         use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
-        use teeny_test::cuda as testing;
         use teeny_kernels::graph::{Anduin, TritonLowering};
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
         // ── 1. Parse configs ───────────────────────────────────────────────────

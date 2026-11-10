@@ -42,10 +42,10 @@ pub fn yolo_bce_cls_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
     T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let n_start = T::program_id(Axis::X) * BLOCK_N;
-    let n_offs  = T::arange(0, BLOCK_N) + n_start;
-    let mask    = n_offs.lt(N);
-    let zeros   = T::zeros::<D>(&[BLOCK_N]);
-    let ones    = T::full(&[BLOCK_N], D::from_f64(1.0));
+    let n_offs = T::arange(0, BLOCK_N) + n_start;
+    let mask = n_offs.lt(N);
+    let zeros = T::zeros::<D>(&[BLOCK_N]);
+    let ones = T::full(&[BLOCK_N], D::from_f64(1.0));
 
     // Accumulate BCE over all C classes for this anchor tile.
     let mut acc = zeros;
@@ -53,19 +53,44 @@ pub fn yolo_bce_cls_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
     while c < C {
         // Layout [C, N]: class c occupies row c, at base offset c*N.
         let base = c * N;
-        let x = T::load(pred_ptr.add_offsets(n_offs + base),   Some(mask), Some(zeros), &[], None, None, None, false);
-        let t = T::load(target_ptr.add_offsets(n_offs + base), Some(mask), Some(zeros), &[], None, None, None, false);
+        let x = T::load(
+            pred_ptr.add_offsets(n_offs + base),
+            Some(mask),
+            Some(zeros),
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let t = T::load(
+            target_ptr.add_offsets(n_offs + base),
+            Some(mask),
+            Some(zeros),
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
 
         // Numerically-stable BCE: max(x, 0) − x·t + log(1 + exp(−|x|))
-        let relu_x    = T::maximum(x, zeros);
+        let relu_x = T::maximum(x, zeros);
         let log1p_exp = T::log(ones + T::exp(zeros - T::abs(x)));
-        let bce       = relu_x - x * t + log1p_exp;
+        let bce = relu_x - x * t + log1p_exp;
 
         acc = acc + bce;
         c += 1;
     }
 
-    T::store(loss_ptr.add_offsets(n_offs), acc, Some(mask), &[], None, None);
+    T::store(
+        loss_ptr.add_offsets(n_offs),
+        acc,
+        Some(mask),
+        &[],
+        None,
+        None,
+    );
 }
 
 /// BCE classification loss backward: upstream gradient + forward inputs → ∂L/∂pred.
@@ -80,8 +105,8 @@ pub fn yolo_bce_cls_loss_forward<T: Triton, D: Float, const BLOCK_N: i32>(
 #[allow(clippy::erasing_op, clippy::identity_op)]
 #[kernel]
 pub fn yolo_bce_cls_loss_backward<T: Triton, D: Float, const BLOCK_N: i32>(
-    dy_ptr:     InPtr<T::Pointer<D>>,
-    pred_ptr:   InPtr<T::Pointer<D>>,
+    dy_ptr: InPtr<T::Pointer<D>>,
+    pred_ptr: InPtr<T::Pointer<D>>,
     target_ptr: InPtr<T::Pointer<D>>,
     d_pred_ptr: OutPtr<T::Pointer<D>>,
     N: i32,
@@ -92,25 +117,59 @@ pub fn yolo_bce_cls_loss_backward<T: Triton, D: Float, const BLOCK_N: i32>(
     T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let n_start = T::program_id(Axis::X) * BLOCK_N;
-    let n_offs  = T::arange(0, BLOCK_N) + n_start;
-    let mask    = n_offs.lt(N);
-    let zeros   = T::zeros::<D>(&[BLOCK_N]);
-    let ones    = T::full(&[BLOCK_N], D::from_f64(1.0));
+    let n_offs = T::arange(0, BLOCK_N) + n_start;
+    let mask = n_offs.lt(N);
+    let zeros = T::zeros::<D>(&[BLOCK_N]);
+    let ones = T::full(&[BLOCK_N], D::from_f64(1.0));
     let neg_one = T::full(&[BLOCK_N], D::from_f64(-1.0));
 
-    let dy = T::load(dy_ptr.add_offsets(n_offs), Some(mask), Some(zeros), &[], None, None, None, false);
+    let dy = T::load(
+        dy_ptr.add_offsets(n_offs),
+        Some(mask),
+        Some(zeros),
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     let mut c: i32 = 0;
     while c < C {
         let base = c * N;
-        let x = T::load(pred_ptr.add_offsets(n_offs + base),   Some(mask), Some(zeros), &[], None, None, None, false);
-        let t = T::load(target_ptr.add_offsets(n_offs + base), Some(mask), Some(zeros), &[], None, None, None, false);
+        let x = T::load(
+            pred_ptr.add_offsets(n_offs + base),
+            Some(mask),
+            Some(zeros),
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let t = T::load(
+            target_ptr.add_offsets(n_offs + base),
+            Some(mask),
+            Some(zeros),
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
 
         // σ(x) = 1 / (1 + exp(−x))
         let sig = ones / (ones + T::exp(neg_one * x));
         let grad = dy * (sig - t);
 
-        T::store(d_pred_ptr.add_offsets(n_offs + base), grad, Some(mask), &[], None, None);
+        T::store(
+            d_pred_ptr.add_offsets(n_offs + base),
+            grad,
+            Some(mask),
+            &[],
+            None,
+            None,
+        );
         c += 1;
     }
 }

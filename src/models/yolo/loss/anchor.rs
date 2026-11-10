@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 //! Anchor grid generation for YOLO detection heads.
 //!
 //! YOLO26 uses three FPN levels with strides [8, 16, 32].  For each level,
@@ -46,8 +45,8 @@ impl AnchorGrid {
     /// Build the anchor grid for arbitrary strides.
     pub fn new(img_h: usize, img_w: usize, strides: &[usize]) -> Self {
         let total: usize = strides.iter().map(|&s| (img_h / s) * (img_w / s)).sum();
-        let mut cx      = Vec::with_capacity(total);
-        let mut cy      = Vec::with_capacity(total);
+        let mut cx = Vec::with_capacity(total);
+        let mut cy = Vec::with_capacity(total);
         let mut stride_v = Vec::with_capacity(total);
 
         for &s in strides {
@@ -62,7 +61,12 @@ impl AnchorGrid {
             }
         }
 
-        AnchorGrid { n_anchors: total, cx, cy, strides: stride_v }
+        AnchorGrid {
+            n_anchors: total,
+            cx,
+            cy,
+            strides: stride_v,
+        }
     }
 
     /// Decode raw LTRB predictions into absolute XYWH boxes.
@@ -79,10 +83,10 @@ impl AnchorGrid {
             let r = ltrb[2 * a + i];
             let b = ltrb[3 * a + i];
             let s = self.strides[i];
-            out[i]           = self.cx[i] + s * (r - l) * 0.5; // cx
-            out[a + i]       = self.cy[i] + s * (b - t) * 0.5; // cy
-            out[2 * a + i]   = s * (l + r);                     // w
-            out[3 * a + i]   = s * (t + b);                     // h
+            out[i] = self.cx[i] + s * (r - l) * 0.5; // cx
+            out[a + i] = self.cy[i] + s * (b - t) * 0.5; // cy
+            out[2 * a + i] = s * (l + r); // w
+            out[3 * a + i] = s * (t + b); // h
         }
         out
     }
@@ -98,13 +102,13 @@ impl AnchorGrid {
         for i in 0..a {
             let d_cx = d_xywh[i];
             let d_cy = d_xywh[a + i];
-            let d_w  = d_xywh[2 * a + i];
-            let d_h  = d_xywh[3 * a + i];
+            let d_w = d_xywh[2 * a + i];
+            let d_h = d_xywh[3 * a + i];
             let s = self.strides[i];
-            d_ltrb[i]         = d_cx * (-s * 0.5) + d_w * s; // d_l
-            d_ltrb[a + i]     = d_cy * (-s * 0.5) + d_h * s; // d_t
-            d_ltrb[2 * a + i] = d_cx * ( s * 0.5) + d_w * s; // d_r
-            d_ltrb[3 * a + i] = d_cy * ( s * 0.5) + d_h * s; // d_b
+            d_ltrb[i] = d_cx * (-s * 0.5) + d_w * s; // d_l
+            d_ltrb[a + i] = d_cy * (-s * 0.5) + d_h * s; // d_t
+            d_ltrb[2 * a + i] = d_cx * (s * 0.5) + d_w * s; // d_r
+            d_ltrb[3 * a + i] = d_cy * (s * 0.5) + d_h * s; // d_b
         }
         d_ltrb
     }
