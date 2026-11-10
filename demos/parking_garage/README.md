@@ -2,26 +2,30 @@
 
 This crate demonstrates the two-process parking garage shape:
 
-- `parking-garage-server` publishes sample backend events over a Unix domain socket.
-- `parking-garage-webapp` serves a small Vue page and exposes an HTTP/WebSocket API for the browser.
+- `parking-garage-server` scans the PKLot car parks, optionally runs YOLO26n inference on each
+  image, and publishes each lot's occupancy over a WebSocket API
+  (`ws://<host>:3001/api/ws`).
+- `parking-garage-webapp` serves the small Vue page. The browser then connects straight to the
+  server's WebSocket; the webapp doesn't proxy it.
 
-Run the server:
+Run the server (add `--features cuda` and `--model ultralytics/yolo26n` for inference):
 
 ```bash
-cargo run --bin parking-garage-server
+cargo run -p parking-garage --bin parking-garage-server
 ```
 
 Run the browser-facing webapp in another terminal:
 
 ```bash
-cargo run --bin parking-garage-webapp
+cargo run -p parking-garage --bin parking-garage-webapp
 ```
 
 Then open <http://127.0.0.1:3000>.
 
-The server accepts an optional Unix socket path. If omitted, it uses `/tmp/vision-rs-parking-garage.sock`.
-
-The client accepts an optional HTTP listen address. If omitted, it uses `0.0.0.0:3000`.
+The server listens on port 3001 (`--port` overrides it) and takes the dataset directory as an
+optional positional argument (see [Dataset](#dataset)). The webapp takes an optional HTTP listen
+address and defaults to `0.0.0.0:3000`. The page connects to port 3001 on the host it was loaded
+from; if the server runs elsewhere, add `?ws=ws://<host>:<port>/api/ws` to the page URL.
 
 ## Dataset
 
