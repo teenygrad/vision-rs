@@ -10,6 +10,7 @@ use teeny_riscv::compiler::{
     target::{Capability, Target},
 };
 use vision_rs::models::stereo::kernels::bilinear_sampler_1d::BilinearSampler1dForward;
+use vision_rs::models::stereo::kernels::conv_transpose2d_k4s2p1::ConvTranspose2dK4s2p1Forward;
 use vision_rs::models::stereo::kernels::correlation::CorrelationForward;
 use vision_rs::models::stereo::kernels::interpolate_bilinear::InterpolateBilinearForward;
 use vision_rs::models::stereo::kernels::l2_normalize::L2NormalizeForward;
@@ -52,6 +53,10 @@ fn test_stereo_kernels_lower_to_rvv() -> Result<(), Box<dyn std::error::Error>> 
     check(
         "interpolate_bilinear_forward",
         &InterpolateBilinearForward::<f32>::new(16),
+    )?;
+    check(
+        "conv_transpose2d_k4s2p1_forward",
+        &ConvTranspose2dK4s2p1Forward::<f32>::new(16),
     )?;
     Ok(())
 }
