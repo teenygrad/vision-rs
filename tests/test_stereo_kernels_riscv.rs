@@ -12,6 +12,7 @@ use teeny_riscv::compiler::{
 use vision_rs::models::stereo::kernels::bilinear_sampler_1d::BilinearSampler1dForward;
 use vision_rs::models::stereo::kernels::correlation::CorrelationForward;
 use vision_rs::models::stereo::kernels::l2_normalize::L2NormalizeForward;
+use vision_rs::models::stereo::kernels::unfold3x3::Unfold3x3Forward;
 
 fn check(name: &str, kernel: &impl Kernel) -> Result<(), Box<dyn std::error::Error>> {
     let target = Target::new(Capability::SpacemitK3);
@@ -46,5 +47,6 @@ fn test_stereo_kernels_lower_to_rvv() -> Result<(), Box<dyn std::error::Error>> 
     )?;
     check("l2_normalize_forward", &L2NormalizeForward::<f32>::new(16))?;
     check("correlation_forward", &CorrelationForward::<f32>::new(16))?;
+    check("unfold3x3_forward", &Unfold3x3Forward::<f32>::new(16))?;
     Ok(())
 }
