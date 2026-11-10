@@ -4,16 +4,18 @@ members = ["demos/parking_garage"]
 # Single source of truth for teeny-* versions — members reference these via
 # `{ workspace = true }` instead of repeating the version number.
 [workspace.dependencies]
-teeny-core     = { version = "0.2.0", features = ["std"] }
+teeny-core     = { version = "0.3.0", features = ["std"] }
 # default-features off: teeny-kernels defaults to `cuda`, which would otherwise pull the CUDA
 # toolkit into a `riscv`-only build. The `cuda`/`riscv` features below turn the backend back on.
-teeny-kernels  = { version = "0.2.0", default-features = false }
-teeny-macros   = "0.2.0"
-teeny-triton   = "0.2.0"
-teeny-data     = "0.2.0"
-teeny-cuda     = "0.2.0"
-teeny-compiler = "0.2.0"
-teeny-cli      = "0.2.0"
+teeny-kernels  = { version = "0.3.0", default-features = false }
+teeny-macros   = "0.3.0"
+teeny-triton   = "0.3.0"
+teeny-data     = "0.3.0"
+teeny-cuda     = "0.3.0"
+teeny-compiler = "0.3.0"
+teeny-cli      = "0.3.0"
+teeny-riscv    = "0.3.0"
+teeny-test     = "0.3.0"
 clap           = { version = "4", features = ["derive"] }
 
 [package]
@@ -65,10 +67,9 @@ teeny-cli      = { workspace = true, optional = true }
 anyhow         = { version = "1.0", default-features = false }
 
 [dev-dependencies]
-# CUDA test helpers (`teeny_test::cuda`, formerly `teeny_cuda::testing`). Path-only: teeny-test
-# isn't published, and Cargo drops path dev-dependencies when publishing. Its `cuda` feature is
+# CUDA test helpers (`teeny_test::cuda`, formerly `teeny_cuda::testing`). Its `cuda` feature is
 # enabled by this crate's `cuda` feature so `--no-default-features` tests need no CUDA toolkit.
-teeny-test     = { path = "../teenygrad/testing/teeny-test" }
+teeny-test     = { workspace = true }
 serial_test    = "3"
 teeny-compiler = { workspace = true }
 dotenv         = "0.15"
@@ -84,28 +85,3 @@ futures-util   = "0.3"
 eframe         = { version = "0.29", features = ["x11"] }
 image          = "0.25"
 serde_json     = "1"
-
-# [patch.crates-io] overrides all teenygrad crates with local path versions.
-# Remove this section once the crates are published to crates.io.
-#
-# Only include crates that are ACTUALLY in the dependency tree. cross builds
-# auto-mount path deps found by `cargo metadata`, but still validate ALL
-# [patch] entries even unused ones — unmounted unused patches cause the cross
-# build to fail. Keep this list in sync with the transitive dep graph.
-#
-# Enabled on this branch: the `riscv` feature needs teenygrad's RISC-V AOT
-# backend (teeny-cli `riscv` feature, teeny-riscv), which isn't published to
-# crates.io yet. [patch] is an unconditional override (not a fallback), so this
-# requires a ../teenygrad checkout; comment it out again once teenygrad is
-# published with RISC-V support.
-[patch.crates-io]
-teeny-core     = { path = "../teenygrad/core/teeny-core" }
-teeny-kernels  = { path = "../teenygrad/kernels/teeny-kernels" }
-teeny-triton   = { path = "../teenygrad/kernels/teeny-triton" }
-teeny-compiler = { path = "../teenygrad/compiler/teeny-compiler" }
-teeny-macros   = { path = "../teenygrad/macros/teeny-macros" }
-teeny-cuda     = { path = "../teenygrad/drivers/teeny-cuda" }
-teeny-riscv    = { path = "../teenygrad/drivers/teeny-riscv" }
-teeny-runtime  = { path = "../teenygrad/runtime/teeny-runtime" }
-teeny-data     = { path = "../teenygrad/utilities/teeny-data" }
-teeny-cli      = { path = "../teenygrad/utilities/teeny-cli" }

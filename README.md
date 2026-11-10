@@ -137,10 +137,11 @@ Compiled artifacts land in `target/aarch64-unknown-linux-gnu/release/`.
 
 `cargo teeny build` wraps `cross build` and automatically:
 
-- Resolves the [teenygrad](https://github.com/teenygrad/teenygrad) workspace root from the
-  `[patch.crates-io]` entries in `Cargo.toml` and mounts it into the cross container (required
+- If `Cargo.toml` has a `[patch.crates-io]` section pointing at a local
+  [teenygrad](https://github.com/teenygrad/teenygrad) checkout (only when developing against
+  unreleased teenygrad), resolves that workspace root and mounts it into the cross container,
   because cross only auto-mounts individual crate directories, not the workspace root that
-  provides `Cargo.toml` inheritance).
+  provides `Cargo.toml` inheritance.
 - Mounts the host CUDA aarch64 target directory at the path the cross container's Dockerfile
   expects.
 - Uses the custom Docker image defined in `docker/Dockerfile.jetson-orin-nano`, which extends the
@@ -191,9 +192,6 @@ The `riscv` feature compiles YOLO26's kernels ahead of time for RISC-V cores wit
 vector extension, and cross-builds the crate for `riscv64gc-unknown-linux-gnu`. Build it with
 `--no-default-features` to leave out CUDA entirely; no CUDA toolkit is needed. Inference,
 training and benchmarking still need `cuda`, because teenygrad has no RISC-V model runtime yet.
-
-RISC-V support isn't on crates.io yet, so this branch enables `[patch.crates-io]` against a
-sibling `../teenygrad` checkout.
 
 ```bash
 # Ahead-of-time compile the kernels (on the host) for a SpacemiT K3

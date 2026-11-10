@@ -6,12 +6,6 @@
 - **Rust**: the latest stable toolchain via [rustup](https://rustup.rs/).
 - **CUDA Toolkit 13.3 or later** on the host — required for the `cuda`
   feature (on by default) and for ahead-of-time kernel compilation.
-- **This crate's sibling repo**, checked out next to `vision-rs`:
-  ```bash
-  git clone https://github.com/teenygrad/teenygrad ../teenygrad
-  ```
-  `vision-rs`'s `Cargo.toml` patches `teeny-*` crates to `../teenygrad/...`
-  via `[patch.crates-io]`, and cross builds auto-mount that workspace root.
 - Only if cross-compiling/deploying to a Jetson Orin Nano:
   [`cross`](https://github.com/cross-rs/cross), Docker, the
   `aarch64-unknown-linux-gnu` rustup target, `cargo-teeny`, and SSH/`rsync`

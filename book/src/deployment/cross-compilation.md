@@ -51,9 +51,10 @@ Compiled artifacts land in `target/aarch64-unknown-linux-gnu/release/`.
 
 `cargo teeny build` wraps `cross build` and automatically:
 
-- Resolves the [teenygrad](https://github.com/teenygrad/teenygrad) workspace
-  root from `Cargo.toml`'s `[patch.crates-io]` entries and mounts it into
-  the cross container — required because `cross` only auto-mounts
+- If `Cargo.toml` has `[patch.crates-io]` entries pointing at a local
+  [teenygrad](https://github.com/teenygrad/teenygrad) checkout (only when
+  developing against unreleased teenygrad), resolves that workspace root and
+  mounts it into the cross container, because `cross` only auto-mounts
   individual crate directories, not the workspace root providing
   `Cargo.toml` inheritance.
 - Mounts the host CUDA aarch64 target directory at the path the cross

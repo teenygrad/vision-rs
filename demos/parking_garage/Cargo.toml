@@ -62,12 +62,10 @@ tracing-subscriber = "0.3"
 vision-rs      = { path = "../..", optional = true, default-features = false }
 teeny-core     = { workspace = true, optional = true }
 teeny-cuda     = { workspace = true, optional = true }
-# RISC-V chip identifiers (`Capability`), to pick the packaged kernels' target. Resolved to
-# ../teenygrad by the workspace's [patch.crates-io].
-teeny-riscv    = { version = "0.2", optional = true }
-# CUDA device setup helpers (`teeny_test::cuda`, formerly `teeny_cuda::testing`). Path-only:
-# teeny-test isn't published (fine here -- this demo is `publish = false`).
-teeny-test     = { path = "../../../teenygrad/testing/teeny-test", optional = true }
+# RISC-V chip identifiers (`Capability`), to pick the packaged kernels' target.
+teeny-riscv    = { workspace = true, optional = true }
+# CUDA device setup helpers (`teeny_test::cuda`) and `teeny_test::model::RuntimeModel`.
+teeny-test     = { workspace = true, optional = true }
 teeny-compiler = { workspace = true, optional = true }
 teeny-cli      = { workspace = true, optional = true }
 teeny-kernels  = { workspace = true, optional = true }

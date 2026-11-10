@@ -135,16 +135,16 @@ The library is a single crate (`src/lib.rs` as the root). As modules are added, 
 
 ### `../teenygrad`
 
-The ML/tensor runtime this project builds on. All its crates are pre-patched in `Cargo.toml` via `[patch.crates-io]`, so adding a dependency is straightforward:
+The ML/tensor runtime this project builds on. Its crates come from crates.io, pinned once in the root `Cargo.toml`'s `[workspace.dependencies]`; members reference them with `{ workspace = true }`. To add one, add it there first:
 
 ```toml
-# In [dependencies] — Cargo resolves to the local path automatically
-teeny-core = "0.1"
+[workspace.dependencies]
+teeny-runtime = "0.3.0"
 ```
 
-Available crates: `teeny-core`, `teeny-fxgraph`, `teeny-kernels`, `teeny-triton`, `teeny-compiler`, `teeny-macros`, `teeny-cuda`, `teeny-cache`, `teeny-data`, `teeny-http`, `teeny-nlp`, `teeny-onnx`, `teeny-torch`.
+Published crates: `teeny-core`, `teeny-macros`, `teeny-triton`, `teeny-compiler`, `teeny-kernels`, `teeny-cuda`, `teeny-riscv`, `teeny-runtime`, `teeny-test`, `teeny-cli`, `teeny-data`, `teeny-quant`, `teeny-vision`, `teeny-onnx`, `teeny-llm`.
 
-When these crates are eventually published to crates.io, remove the `[patch.crates-io]` block from `Cargo.toml` and the version specifiers will resolve normally.
+To develop against an unreleased `../teenygrad` checkout, add a temporary `[patch.crates-io]` section to the root `Cargo.toml` with `path = "../teenygrad/..."` entries for every `teeny-*` crate in the dependency tree. Don't commit it: `cargo teeny build` mounts the patched workspace into cross containers, and CI and publishing need the crates.io versions.
 
 ### `../teeny`
 
