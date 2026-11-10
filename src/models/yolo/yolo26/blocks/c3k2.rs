@@ -14,8 +14,11 @@
  * limitations under the License.
  */
 
-
-use teeny_core::{dtype::Float, graph::{Op, SymTensor}, name_scope::name_scope};
+use teeny_core::{
+    dtype::Float,
+    graph::{Op, SymTensor},
+    name_scope::name_scope,
+};
 
 use super::bottleneck::{bottleneck_3x3, bottleneck_std};
 use super::c2psa::psa_block;
@@ -24,20 +27,45 @@ use super::conv::conv;
 // ── Graph helpers ─────────────────────────────────────────────────────────────
 
 fn channel_chunk(x: SymTensor, c_total: usize, chunk_c: usize, chunk_offset: usize) -> SymTensor {
-    let op = Op::ChannelChunk { c_total, chunk_c, chunk_offset };
+    let op = Op::ChannelChunk {
+        c_total,
+        chunk_c,
+        chunk_offset,
+    };
     let shape = vec![x.shape[0], Some(chunk_c), x.shape[2], x.shape[3]];
-    let node_id = x.graph.borrow_mut().add_node(op, vec![x.node_id], x.dtype, shape.clone());
-    SymTensor { node_id, graph: x.graph.clone(), dtype: x.dtype, shape }
+    let node_id = x
+        .graph
+        .borrow_mut()
+        .add_node(op, vec![x.node_id], x.dtype, shape.clone());
+    SymTensor {
+        node_id,
+        graph: x.graph.clone(),
+        dtype: x.dtype,
+        shape,
+    }
 }
 
 fn channel_cat(tensors: Vec<SymTensor>, c_total: usize) -> SymTensor {
     let first = &tensors[0];
-    let shape = vec![first.shape[0], Some(c_total), first.shape[2], first.shape[3]];
+    let shape = vec![
+        first.shape[0],
+        Some(c_total),
+        first.shape[2],
+        first.shape[3],
+    ];
     let inputs: Vec<usize> = tensors.iter().map(|t| t.node_id).collect();
     let node_id = first.graph.borrow_mut().add_node(
-        Op::ChannelCat { c_total }, inputs, first.dtype, shape.clone(),
+        Op::ChannelCat { c_total },
+        inputs,
+        first.dtype,
+        shape.clone(),
     );
-    SymTensor { node_id, graph: first.graph.clone(), dtype: first.dtype, shape }
+    SymTensor {
+        node_id,
+        graph: first.graph.clone(),
+        dtype: first.dtype,
+        shape,
+    }
 }
 
 // ── C3k inner block ───────────────────────────────────────────────────────────
@@ -51,10 +79,22 @@ fn c3k_inner<D: Float + 'static>(c: usize, shortcut: bool) -> impl Fn(SymTensor)
     let m0 = bottleneck_3x3::<D>(c_h, shortcut);
     let m1 = bottleneck_3x3::<D>(c_h, shortcut);
     move |x: SymTensor| {
-        let after_cv1 = { let _g = name_scope("cv1"); cv1(x.clone()) };
-        let after_m0  = { let _g = name_scope("m.0"); m0(after_cv1) };
-        let after_m1  = { let _g = name_scope("m.1"); m1(after_m0) };
-        let after_cv2 = { let _g = name_scope("cv2"); cv2(x) };
+        let after_cv1 = {
+            let _g = name_scope("cv1");
+            cv1(x.clone())
+        };
+        let after_m0 = {
+            let _g = name_scope("m.0");
+            m0(after_cv1)
+        };
+        let after_m1 = {
+            let _g = name_scope("m.1");
+            m1(after_m0)
+        };
+        let after_cv2 = {
+            let _g = name_scope("cv2");
+            cv2(x)
+        };
         let _g = name_scope("cv3");
         cv3(channel_cat(vec![after_m1, after_cv2], 2 * c_h))
     }
@@ -71,10 +111,16 @@ fn bottleneck_psa_seq<D: Float + Send + Sync + 'static>(
     key_dim: usize,
 ) -> impl Fn(SymTensor) -> SymTensor {
     let bneck = bottleneck_std::<D>(c, shortcut);
-    let psa   = psa_block::<D>(c, num_heads, key_dim);
+    let psa = psa_block::<D>(c, num_heads, key_dim);
     move |x: SymTensor| {
-        let x = { let _g = name_scope("0"); bneck(x) };
-        { let _g = name_scope("1"); psa(x) }
+        let x = {
+            let _g = name_scope("0");
+            bneck(x)
+        };
+        {
+            let _g = name_scope("1");
+            psa(x)
+        }
     }
 }
 
@@ -112,7 +158,10 @@ pub fn c3k2<D: Float + 'static>(
         })
         .collect();
     move |x: SymTensor| {
-        let h = { let _g = name_scope("cv1"); cv1(x) };
+        let h = {
+            let _g = name_scope("cv1");
+            cv1(x)
+        };
         let y0 = channel_chunk(h.clone(), 2 * c, c, 0);
         let y1 = channel_chunk(h, 2 * c, c, c);
         let mut last = y1.clone();
@@ -122,7 +171,10 @@ pub fn c3k2<D: Float + 'static>(
             last = b(last);
             parts.push(last.clone());
         }
-        { let _g = name_scope("cv2"); cv2(channel_cat(parts, (2 + n) * c)) }
+        {
+            let _g = name_scope("cv2");
+            cv2(channel_cat(parts, (2 + n) * c))
+        }
     }
 }
 
@@ -149,7 +201,10 @@ pub fn c3k2_psa<D: Float + Send + Sync + 'static>(
         })
         .collect();
     move |x: SymTensor| {
-        let h = { let _g = name_scope("cv1"); cv1(x) };
+        let h = {
+            let _g = name_scope("cv1");
+            cv1(x)
+        };
         let y0 = channel_chunk(h.clone(), 2 * c, c, 0);
         let y1 = channel_chunk(h, 2 * c, c, c);
         let mut last = y1.clone();
@@ -159,6 +214,9 @@ pub fn c3k2_psa<D: Float + Send + Sync + 'static>(
             last = b(last);
             parts.push(last.clone());
         }
-        { let _g = name_scope("cv2"); cv2(channel_cat(parts, (2 + n) * c)) }
+        {
+            let _g = name_scope("cv2");
+            cv2(channel_cat(parts, (2 + n) * c))
+        }
     }
 }

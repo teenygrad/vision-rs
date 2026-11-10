@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 //! PSA attention helper kernels and RuntimeOp wrappers.
 //!
 //! Implements the data-rearrangement passes surrounding Flash Attention 2 for
@@ -56,9 +55,9 @@ use super::flash_attn2::FlashAttention2Forward;
 /// Block: `[KEY_DIM, 1, 1]`
 #[kernel]
 pub fn psa_pack_qkv<T: Triton, D: Float, const KEY_DIM: i32>(
-    qkv_ptr: T::Pointer<D>,
-    out_ptr: T::Pointer<D>,
-    qkv_h: i32,    // num_heads * 4 * KEY_DIM
+    qkv_ptr: InPtr<T::Pointer<D>>,
+    out_ptr: OutPtr<T::Pointer<D>>,
+    qkv_h: i32, // num_heads * 4 * KEY_DIM
     H: i32,
     W: i32,
     B: i32,
@@ -84,7 +83,16 @@ pub fn psa_pack_qkv<T: Triton, D: Float, const KEY_DIM: i32>(
     let chan_base: i32 = h * 4 * KEY_DIM + section * KEY_DIM;
     let src_off = (d + chan_base) * (H * W) + (b * qkv_h * H * W + n);
 
-    let x = T::load(qkv_ptr.add_offsets(src_off), None, None, &[], None, None, None, false);
+    let x = T::load(
+        qkv_ptr.add_offsets(src_off),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     // Output flat [4, BH, N, KEY_DIM]
     let dst_base: i32 = section * BH * N * KEY_DIM + bh * N * KEY_DIM + n * KEY_DIM;
@@ -103,10 +111,10 @@ pub fn psa_pack_qkv<T: Triton, D: Float, const KEY_DIM: i32>(
 /// Grid: `[BH * N, 1, 1]`.  Block: `[KEY_DIM, 1, 1]`.
 #[kernel]
 pub fn psa_extract_v_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
-    qkv_ptr: T::Pointer<D>,
-    v_ptr: T::Pointer<D>,
+    qkv_ptr: InPtr<T::Pointer<D>>,
+    v_ptr: OutPtr<T::Pointer<D>>,
     qkv_h: i32,
-    c: i32,        // num_heads * 2 * KEY_DIM
+    c: i32, // num_heads * 2 * KEY_DIM
     H: i32,
     W: i32,
     num_heads: i32,
@@ -129,8 +137,26 @@ pub fn psa_extract_v_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
     let src_off_lo = (d + src_lo_base) * (H * W) + (b * qkv_h * H * W + n);
     let src_off_hi = (d + src_hi_base) * (H * W) + (b * qkv_h * H * W + n);
 
-    let x_lo = T::load(qkv_ptr.add_offsets(src_off_lo), None, None, &[], None, None, None, false);
-    let x_hi = T::load(qkv_ptr.add_offsets(src_off_hi), None, None, &[], None, None, None, false);
+    let x_lo = T::load(
+        qkv_ptr.add_offsets(src_off_lo),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let x_hi = T::load(
+        qkv_ptr.add_offsets(src_off_hi),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     let dst_lo_base: i32 = h * 2 * KEY_DIM;
     let dst_hi_base: i32 = h * 2 * KEY_DIM + KEY_DIM;
@@ -151,9 +177,9 @@ pub fn psa_extract_v_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
 /// Grid: `[BH * N, 1, 1]`.  Block: `[KEY_DIM, 1, 1]`.
 #[kernel]
 pub fn psa_merge_attn_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
-    lo_ptr: T::Pointer<D>,
-    hi_ptr: T::Pointer<D>,
-    out_ptr: T::Pointer<D>,
+    lo_ptr: InPtr<T::Pointer<D>>,
+    hi_ptr: InPtr<T::Pointer<D>>,
+    out_ptr: OutPtr<T::Pointer<D>>,
     c: i32,
     H: i32,
     W: i32,
@@ -176,8 +202,26 @@ pub fn psa_merge_attn_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
     let src_base: i32 = bh * N * KEY_DIM + n * KEY_DIM;
     let src_off = d + src_base;
 
-    let x_lo = T::load(lo_ptr.add_offsets(src_off), None, None, &[], None, None, None, false);
-    let x_hi = T::load(hi_ptr.add_offsets(src_off), None, None, &[], None, None, None, false);
+    let x_lo = T::load(
+        lo_ptr.add_offsets(src_off),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let x_hi = T::load(
+        hi_ptr.add_offsets(src_off),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     let dst_lo_base: i32 = h * 2 * KEY_DIM;
     let dst_hi_base: i32 = h * 2 * KEY_DIM + KEY_DIM;
@@ -199,8 +243,8 @@ pub fn psa_merge_attn_nchw<T: Triton, D: Float, const KEY_DIM: i32>(
 /// `d_qkv` buffer.
 #[kernel]
 pub fn psa_pack_qkv_backward<T: Triton, D: Float, const KEY_DIM: i32>(
-    d_packed_ptr: T::Pointer<D>,  // [4, BH, N, KEY_DIM] gradient of the packed output
-    d_qkv_ptr:   T::Pointer<D>,  // [B, qkv_h, H, W]    gradient accumulation target
+    d_packed_ptr: InPtr<T::Pointer<D>>, // [4, BH, N, KEY_DIM] gradient of the packed output
+    d_qkv_ptr: OutPtr<T::Pointer<D>>,   // [B, qkv_h, H, W]    gradient accumulation target
     qkv_h: i32,
     H: i32,
     W: i32,
@@ -224,7 +268,16 @@ pub fn psa_pack_qkv_backward<T: Triton, D: Float, const KEY_DIM: i32>(
 
     // Load from d_packed: flat [4, BH, N, KEY_DIM]
     let src_base = section * BH * N * KEY_DIM + bh * N * KEY_DIM + n * KEY_DIM;
-    let dx = T::load(d_packed_ptr.add_offsets(d + src_base), None, None, &[], None, None, None, false);
+    let dx = T::load(
+        d_packed_ptr.add_offsets(d + src_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     // atomic_add to d_qkv at the NCHW channel position.
     let chan_base = h * 4 * KEY_DIM + section * KEY_DIM;
@@ -242,8 +295,8 @@ pub fn psa_pack_qkv_backward<T: Triton, D: Float, const KEY_DIM: i32>(
 /// by `psa_pack_qkv_backward`.
 #[kernel]
 pub fn psa_extract_v_backward<T: Triton, D: Float, const KEY_DIM: i32>(
-    d_v_ptr:   T::Pointer<D>,  // [B, c, H, W]    gradient of the extracted V output
-    d_qkv_ptr: T::Pointer<D>,  // [B, qkv_h, H, W] gradient accumulation target
+    d_v_ptr: InPtr<T::Pointer<D>>, // [B, c, H, W]    gradient of the extracted V output
+    d_qkv_ptr: OutPtr<T::Pointer<D>>, // [B, qkv_h, H, W] gradient accumulation target
     qkv_h: i32,
     c: i32,
     H: i32,
@@ -268,8 +321,26 @@ pub fn psa_extract_v_backward<T: Triton, D: Float, const KEY_DIM: i32>(
     let v_hi_src_base = h * 2 * KEY_DIM + KEY_DIM;
     let src_off_lo = (d + v_lo_src_base) * (H * W) + (b * c * H * W + n);
     let src_off_hi = (d + v_hi_src_base) * (H * W) + (b * c * H * W + n);
-    let dx_lo = T::load(d_v_ptr.add_offsets(src_off_lo), None, None, &[], None, None, None, false);
-    let dx_hi = T::load(d_v_ptr.add_offsets(src_off_hi), None, None, &[], None, None, None, false);
+    let dx_lo = T::load(
+        d_v_ptr.add_offsets(src_off_lo),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let dx_hi = T::load(
+        d_v_ptr.add_offsets(src_off_hi),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     // atomic_add to d_qkv at the corresponding QKV channel positions (sections 2 and 3).
     let qkv_lo_base = h * 4 * KEY_DIM + 2 * KEY_DIM;
@@ -290,9 +361,9 @@ pub fn psa_extract_v_backward<T: Triton, D: Float, const KEY_DIM: i32>(
 /// channel, so `d_lo` and `d_hi` receive no overlapping writes.
 #[kernel]
 pub fn psa_merge_attn_backward<T: Triton, D: Float, const KEY_DIM: i32>(
-    d_merged_ptr: T::Pointer<D>,  // [B, c, H, W]    gradient of the merged output
-    d_lo_ptr:     T::Pointer<D>,  // [BH, N, KEY_DIM] gradient for FA2_lo output
-    d_hi_ptr:     T::Pointer<D>,  // [BH, N, KEY_DIM] gradient for FA2_hi output
+    d_merged_ptr: InPtr<T::Pointer<D>>, // [B, c, H, W]    gradient of the merged output
+    d_lo_ptr: OutPtr<T::Pointer<D>>,    // [BH, N, KEY_DIM] gradient for FA2_lo output
+    d_hi_ptr: OutPtr<T::Pointer<D>>,    // [BH, N, KEY_DIM] gradient for FA2_hi output
     c: i32,
     H: i32,
     W: i32,
@@ -316,12 +387,30 @@ pub fn psa_merge_attn_backward<T: Triton, D: Float, const KEY_DIM: i32>(
     let src_hi_base = h * 2 * KEY_DIM + KEY_DIM;
     let src_off_lo = (d + src_lo_base) * (H * W) + (b * c * H * W + n);
     let src_off_hi = (d + src_hi_base) * (H * W) + (b * c * H * W + n);
-    let dx_lo = T::load(d_merged_ptr.add_offsets(src_off_lo), None, None, &[], None, None, None, false);
-    let dx_hi = T::load(d_merged_ptr.add_offsets(src_off_hi), None, None, &[], None, None, None, false);
+    let dx_lo = T::load(
+        d_merged_ptr.add_offsets(src_off_lo),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let dx_hi = T::load(
+        d_merged_ptr.add_offsets(src_off_hi),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     // Store to d_lo and d_hi flat [BH, N, KEY_DIM].
     let dst_base = bh * N * KEY_DIM + n * KEY_DIM;
-    let dst_off  = d + dst_base;
+    let dst_off = d + dst_base;
     T::store(d_lo_ptr.add_offsets(dst_off), dx_lo, None, &[], None, None);
     T::store(d_hi_ptr.add_offsets(dst_off), dx_hi, None, &[], None, None);
 }
@@ -338,21 +427,35 @@ pub struct PsaPackQkvRuntimeOp<D: Float + Send + Sync + 'static> {
 impl<D: Float + Send + Sync + 'static> PsaPackQkvRuntimeOp<D> {
     /// Builds forward/backward kernels for the given key dimension and head count.
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
-        Self { fwd: PsaPackQkv::<D>::new(key_dim), bwd: PsaPackQkvBackward::<D>::new(key_dim), num_heads }
+        Self {
+            fwd: PsaPackQkv::<D>::new(key_dim),
+            bwd: PsaPackQkvBackward::<D>::new(key_dim),
+            num_heads,
+        }
     }
 
     /// The forward kernel's function name.
-    pub fn kernel_name(&self) -> &str { self.fwd.name }
+    pub fn kernel_name(&self) -> &str {
+        self.fwd.name
+    }
     /// The forward kernel's generated source.
-    pub fn forward_source(&self) -> &str { &self.fwd.source }
+    pub fn forward_source(&self) -> &str {
+        &self.fwd.source
+    }
     /// The backward kernel's generated source.
-    pub fn backward_source(&self) -> &str { &self.bwd.source }
+    pub fn backward_source(&self) -> &str {
+        &self.bwd.source
+    }
 }
 
 impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaPackQkvRuntimeOp<D> {
-    fn n_activation_inputs(&self) -> usize { 1 }
+    fn n_activation_inputs(&self) -> usize {
+        1
+    }
 
-    fn param_shapes(&self, _: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> { Vec::new() }
+    fn param_shapes(&self, _: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> {
+        Vec::new()
+    }
 
     fn pack_args(
         &self,
@@ -377,16 +480,20 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaPackQ
         visitor.visit_i32(self.num_heads as i32);
     }
 
-    fn block(&self) -> [u32; 3] { [128, 1, 1] }
-
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
         // output_shape = [B, 4, num_heads, N, KEY_DIM]
         // grid = [B * 4 * num_heads * N, 1, 1]
-        [(output_shape[0] * output_shape[1] * output_shape[2] * output_shape[3]) as u32, 1, 1]
+        [
+            (output_shape[0] * output_shape[1] * output_shape[2] * output_shape[3]) as u32,
+            1,
+            1,
+        ]
     }
 
     #[cfg(feature = "training")]
-    fn has_backward(&self) -> bool { true }
+    fn has_backward(&self) -> bool {
+        true
+    }
 
     /// kernel args: d_packed, d_qkv, qkv_h, H, W, B, num_heads
     #[cfg(feature = "training")]
@@ -403,12 +510,12 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaPackQ
         visitor: &mut dyn teeny_core::device::program::ArgVisitor,
     ) {
         // inputs[0].1 = [B, qkv_h, H, W]; output_shape = [4, BH, N, KEY_DIM]
-        let b     = inputs[0].1[0] as i32;
+        let b = inputs[0].1[0] as i32;
         let qkv_h = inputs[0].1[1] as i32;
-        let h     = inputs[0].1[2] as i32;
-        let w     = inputs[0].1[3] as i32;
+        let h = inputs[0].1[2] as i32;
+        let w = inputs[0].1[3] as i32;
         let _ = output_shape;
-        visitor.visit_ptr(grad_output);    // d_packed_ptr
+        visitor.visit_ptr(grad_output); // d_packed_ptr
         visitor.visit_ptr(grad_inputs[0]); // d_qkv_ptr
         visitor.visit_i32(qkv_h);
         visitor.visit_i32(h);
@@ -417,13 +524,14 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaPackQ
         visitor.visit_i32(self.num_heads as i32);
     }
 
-    #[cfg(feature = "training")]
-    fn backward_block(&self) -> [u32; 3] { [128, 1, 1] }
-
     /// Grid = `[B * 4 * num_heads * N, 1, 1]` — same layout as the forward pass.
     #[cfg(feature = "training")]
     fn backward_grid(&self, _input_shapes: &[&[usize]], output_shape: &[usize]) -> [u32; 3] {
-        [(output_shape[0] * output_shape[1] * output_shape[2] * output_shape[3]) as u32, 1, 1]
+        [
+            (output_shape[0] * output_shape[1] * output_shape[2] * output_shape[3]) as u32,
+            1,
+            1,
+        ]
     }
 }
 
@@ -439,21 +547,35 @@ pub struct PsaExtractVRuntimeOp<D: Float + Send + Sync + 'static> {
 impl<D: Float + Send + Sync + 'static> PsaExtractVRuntimeOp<D> {
     /// Builds forward/backward kernels for the given key dimension and head count.
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
-        Self { fwd: PsaExtractVNchw::<D>::new(key_dim), bwd: PsaExtractVBackward::<D>::new(key_dim), num_heads }
+        Self {
+            fwd: PsaExtractVNchw::<D>::new(key_dim),
+            bwd: PsaExtractVBackward::<D>::new(key_dim),
+            num_heads,
+        }
     }
 
     /// The forward kernel's function name.
-    pub fn kernel_name(&self) -> &str { self.fwd.name }
+    pub fn kernel_name(&self) -> &str {
+        self.fwd.name
+    }
     /// The forward kernel's generated source.
-    pub fn forward_source(&self) -> &str { &self.fwd.source }
+    pub fn forward_source(&self) -> &str {
+        &self.fwd.source
+    }
     /// The backward kernel's generated source.
-    pub fn backward_source(&self) -> &str { &self.bwd.source }
+    pub fn backward_source(&self) -> &str {
+        &self.bwd.source
+    }
 }
 
 impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaExtractVRuntimeOp<D> {
-    fn n_activation_inputs(&self) -> usize { 1 }
+    fn n_activation_inputs(&self) -> usize {
+        1
+    }
 
-    fn param_shapes(&self, _: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> { Vec::new() }
+    fn param_shapes(&self, _: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> {
+        Vec::new()
+    }
 
     fn pack_args(
         &self,
@@ -478,8 +600,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaExtra
         visitor.visit_i32(self.num_heads as i32);
     }
 
-    fn block(&self) -> [u32; 3] { [128, 1, 1] }
-
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
         // output_shape = [B, c, H, W]; grid = [BH * N, 1, 1]
         let bh = output_shape[0] * self.num_heads;
@@ -488,7 +608,9 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaExtra
     }
 
     #[cfg(feature = "training")]
-    fn has_backward(&self) -> bool { true }
+    fn has_backward(&self) -> bool {
+        true
+    }
 
     /// kernel args: d_v, d_qkv, qkv_h, c, H, W, num_heads
     #[cfg(feature = "training")]
@@ -506,10 +628,10 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaExtra
     ) {
         // inputs[0].1 = [B, qkv_h, H, W]; output_shape = [B, c, H, W]
         let qkv_h = inputs[0].1[1] as i32;
-        let h     = inputs[0].1[2] as i32;
-        let w     = inputs[0].1[3] as i32;
-        let c     = output_shape[1] as i32;
-        visitor.visit_ptr(grad_output);    // d_v_ptr
+        let h = inputs[0].1[2] as i32;
+        let w = inputs[0].1[3] as i32;
+        let c = output_shape[1] as i32;
+        visitor.visit_ptr(grad_output); // d_v_ptr
         visitor.visit_ptr(grad_inputs[0]); // d_qkv_ptr
         visitor.visit_i32(qkv_h);
         visitor.visit_i32(c);
@@ -517,9 +639,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaExtra
         visitor.visit_i32(w);
         visitor.visit_i32(self.num_heads as i32);
     }
-
-    #[cfg(feature = "training")]
-    fn backward_block(&self) -> [u32; 3] { [128, 1, 1] }
 
     /// Grid = `[BH * N, 1, 1]` — same layout as the forward pass.
     #[cfg(feature = "training")]
@@ -542,21 +661,35 @@ pub struct PsaMergeAttnRuntimeOp<D: Float + Send + Sync + 'static> {
 impl<D: Float + Send + Sync + 'static> PsaMergeAttnRuntimeOp<D> {
     /// Builds forward/backward kernels for the given key dimension and head count.
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
-        Self { fwd: PsaMergeAttnNchw::<D>::new(key_dim), bwd: PsaMergeAttnBackward::<D>::new(key_dim), num_heads }
+        Self {
+            fwd: PsaMergeAttnNchw::<D>::new(key_dim),
+            bwd: PsaMergeAttnBackward::<D>::new(key_dim),
+            num_heads,
+        }
     }
 
     /// The forward kernel's function name.
-    pub fn kernel_name(&self) -> &str { self.fwd.name }
+    pub fn kernel_name(&self) -> &str {
+        self.fwd.name
+    }
     /// The forward kernel's generated source.
-    pub fn forward_source(&self) -> &str { &self.fwd.source }
+    pub fn forward_source(&self) -> &str {
+        &self.fwd.source
+    }
     /// The backward kernel's generated source.
-    pub fn backward_source(&self) -> &str { &self.bwd.source }
+    pub fn backward_source(&self) -> &str {
+        &self.bwd.source
+    }
 }
 
 impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMergeAttnRuntimeOp<D> {
-    fn n_activation_inputs(&self) -> usize { 2 }
+    fn n_activation_inputs(&self) -> usize {
+        2
+    }
 
-    fn param_shapes(&self, _: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> { Vec::new() }
+    fn param_shapes(&self, _: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> {
+        Vec::new()
+    }
 
     fn pack_args(
         &self,
@@ -581,8 +714,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMerge
         visitor.visit_i32(self.num_heads as i32);
     }
 
-    fn block(&self) -> [u32; 3] { [128, 1, 1] }
-
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
         // output_shape = [B, c, H, W]; grid = [BH * N, 1, 1]
         let bh = output_shape[0] * self.num_heads;
@@ -591,7 +722,9 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMerge
     }
 
     #[cfg(feature = "training")]
-    fn has_backward(&self) -> bool { true }
+    fn has_backward(&self) -> bool {
+        true
+    }
 
     /// kernel args: d_merged, d_lo, d_hi, c, H, W, num_heads
     #[cfg(feature = "training")]
@@ -611,7 +744,7 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMerge
         let c = output_shape[1] as i32;
         let h = output_shape[2] as i32;
         let w = output_shape[3] as i32;
-        visitor.visit_ptr(grad_output);    // d_merged_ptr
+        visitor.visit_ptr(grad_output); // d_merged_ptr
         visitor.visit_ptr(grad_inputs[0]); // d_lo_ptr
         visitor.visit_ptr(grad_inputs[1]); // d_hi_ptr
         visitor.visit_i32(c);
@@ -619,9 +752,6 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMerge
         visitor.visit_i32(w);
         visitor.visit_i32(self.num_heads as i32);
     }
-
-    #[cfg(feature = "training")]
-    fn backward_block(&self) -> [u32; 3] { [128, 1, 1] }
 
     /// Grid = `[BH * N, 1, 1]` — same layout as the forward pass.
     #[cfg(feature = "training")]
@@ -648,80 +778,195 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for PsaMerge
 /// Grid: `(N, BH, 1)` — same shape as the FA2 forward pass.
 #[kernel]
 pub fn psa_fa2_backward<T: Triton, D: Float, const HEAD_DIM: i32>(
-    q_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] Q — section 0 of packed forward buffer
-    k_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] K — section 1 of packed forward buffer
-    v_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] V — section v_section of packed forward buffer
-    o_ptr:  T::Pointer<D>,  // [BH, N, HEAD_DIM] FA2 forward output
-    do_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] upstream gradient
-    l_ptr:  T::Pointer<D>,  // [BH * N]          logsumexp saved from forward
-    dq_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] atomic_add target for dQ
-    dk_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] atomic_add target for dK
-    dv_ptr: T::Pointer<D>,  // [BH, N, HEAD_DIM] store target for dV
-    N: i32,                   // N_CTX (== N_CTX_Q == N_CTX_K in PSA self-attention)
+    q_ptr: InPtr<T::Pointer<D>>, // [BH, N, HEAD_DIM] Q — section 0 of packed forward buffer
+    k_ptr: InPtr<T::Pointer<D>>, // [BH, N, HEAD_DIM] K — section 1 of packed forward buffer
+    v_ptr: InPtr<T::Pointer<D>>, // [BH, N, HEAD_DIM] V — section v_section of packed forward buffer
+    o_ptr: InPtr<T::Pointer<D>>, // [BH, N, HEAD_DIM] FA2 forward output
+    do_ptr: InPtr<T::Pointer<D>>, // [BH, N, HEAD_DIM] upstream gradient
+    l_ptr: InPtr<T::Pointer<D>>, // [BH * N]          logsumexp saved from forward
+    dq_ptr: OutPtr<T::Pointer<D>>, // [BH, N, HEAD_DIM] atomic_add target for dQ
+    dk_ptr: OutPtr<T::Pointer<D>>, // [BH, N, HEAD_DIM] atomic_add target for dK
+    dv_ptr: OutPtr<T::Pointer<D>>, // [BH, N, HEAD_DIM] store target for dV
+    N: i32,                      // N_CTX (== N_CTX_Q == N_CTX_K in PSA self-attention)
     softmax_scale: f32,
 ) where
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
     T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
-    let pid_n  = T::program_id(Axis::X); // spatial token [0, N)
+    let pid_n = T::program_id(Axis::X); // spatial token [0, N)
     let pid_bh = T::program_id(Axis::Y); // (batch, head)  [0, BH)
 
     let row_base = pid_bh * N * HEAD_DIM + pid_n * HEAD_DIM;
-    let l_base   = pid_bh * N + pid_n;
-    let bh_base  = pid_bh * N * HEAD_DIM;
-    let l_bh     = pid_bh * N;
+    let l_base = pid_bh * N + pid_n;
+    let bh_base = pid_bh * N * HEAD_DIM;
+    let l_bh = pid_bh * N;
 
-    let d       = T::arange(0, HEAD_DIM);
+    let d = T::arange(0, HEAD_DIM);
     let scale_t = T::full(&[HEAD_DIM], D::from_f64(softmax_scale as f64));
 
     // Load this row's Q, O, dO and compute D_n = rowsum(O * dO).
-    let q_vec  = T::load(q_ptr.add_offsets(d + row_base),  None, None, &[], None, None, None, false);
-    let o_vec  = T::load(o_ptr.add_offsets(d + row_base),  None, None, &[], None, None, None, false);
-    let do_vec = T::load(do_ptr.add_offsets(d + row_base), None, None, &[], None, None, None, false);
+    let q_vec = T::load(
+        q_ptr.add_offsets(d + row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let o_vec = T::load(
+        o_ptr.add_offsets(d + row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let do_vec = T::load(
+        do_ptr.add_offsets(d + row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
 
     let d_n = T::sum(o_vec * do_vec, Some(0), false); // scalar
 
-    let l_n_raw = T::load(l_ptr.add_offsets(T::arange(0, 1) + l_base), None, None, &[], None, None, None, false);
-    let l_n     = T::sum(l_n_raw, Some(0), false); // scalar
+    let l_n_raw = T::load(
+        l_ptr.add_offsets(T::arange(0, 1) + l_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let l_n = T::sum(l_n_raw, Some(0), false); // scalar
 
     // Phase 1: accumulate dQ_n by iterating over all K rows.
     let mut dq_acc = T::zeros::<D>(&[HEAD_DIM]);
     for k_row in 0..N {
-        let kv_row_base  = bh_base + k_row * HEAD_DIM;
-        let k_vec        = T::load(k_ptr.add_offsets(d + kv_row_base), None, None, &[], None, None, None, false);
-        let v_vec        = T::load(v_ptr.add_offsets(d + kv_row_base), None, None, &[], None, None, None, false);
-        let qk           = T::sum(q_vec * k_vec, Some(0), false) * scale_t;
-        let p            = T::exp(qk - l_n);
-        let do_dot_v     = T::sum(do_vec * v_vec, Some(0), false);
-        let ds           = p * (do_dot_v - d_n);
+        let kv_row_base = bh_base + k_row * HEAD_DIM;
+        let k_vec = T::load(
+            k_ptr.add_offsets(d + kv_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let v_vec = T::load(
+            v_ptr.add_offsets(d + kv_row_base),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let qk = T::sum(q_vec * k_vec, Some(0), false) * scale_t;
+        let p = T::exp(qk - l_n);
+        let do_dot_v = T::sum(do_vec * v_vec, Some(0), false);
+        let ds = p * (do_dot_v - d_n);
         dq_acc = dq_acc + ds * k_vec * scale_t;
     }
     T::atomic_add(dq_ptr.add_offsets(d + row_base), dq_acc, None, None, None);
 
     // Phase 2: accumulate dK_n and dV_n by iterating over all Q rows.
-    let k_vec_n = T::load(k_ptr.add_offsets(d + row_base), None, None, &[], None, None, None, false);
-    let v_vec_n = T::load(v_ptr.add_offsets(d + row_base), None, None, &[], None, None, None, false);
+    let k_vec_n = T::load(
+        k_ptr.add_offsets(d + row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
+    let v_vec_n = T::load(
+        v_ptr.add_offsets(d + row_base),
+        None,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        false,
+    );
     let mut dk_acc = T::zeros::<D>(&[HEAD_DIM]);
     let mut dv_acc = T::zeros::<D>(&[HEAD_DIM]);
     for q_row in 0..N {
-        let q_row_base_m  = bh_base + q_row * HEAD_DIM;
-        let l_row_base_m  = l_bh + q_row;
-        let q_vec_m  = T::load(q_ptr.add_offsets(d + q_row_base_m),  None, None, &[], None, None, None, false);
-        let o_vec_m  = T::load(o_ptr.add_offsets(d + q_row_base_m),  None, None, &[], None, None, None, false);
-        let do_vec_m = T::load(do_ptr.add_offsets(d + q_row_base_m), None, None, &[], None, None, None, false);
-        let l_m_raw  = T::load(l_ptr.add_offsets(T::arange(0, 1) + l_row_base_m), None, None, &[], None, None, None, false);
-        let l_m      = T::sum(l_m_raw, Some(0), false);
-        let d_m      = T::sum(o_vec_m * do_vec_m, Some(0), false);
-        let qk       = T::sum(q_vec_m * k_vec_n, Some(0), false) * scale_t;
-        let p        = T::exp(qk - l_m);
+        let q_row_base_m = bh_base + q_row * HEAD_DIM;
+        let l_row_base_m = l_bh + q_row;
+        let q_vec_m = T::load(
+            q_ptr.add_offsets(d + q_row_base_m),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let o_vec_m = T::load(
+            o_ptr.add_offsets(d + q_row_base_m),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let do_vec_m = T::load(
+            do_ptr.add_offsets(d + q_row_base_m),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let l_m_raw = T::load(
+            l_ptr.add_offsets(T::arange(0, 1) + l_row_base_m),
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            false,
+        );
+        let l_m = T::sum(l_m_raw, Some(0), false);
+        let d_m = T::sum(o_vec_m * do_vec_m, Some(0), false);
+        let qk = T::sum(q_vec_m * k_vec_n, Some(0), false) * scale_t;
+        let p = T::exp(qk - l_m);
         dv_acc = dv_acc + p * do_vec_m;
         let do_dot_v_m = T::sum(do_vec_m * v_vec_n, Some(0), false);
         let ds_m = p * (do_dot_v_m - d_m);
         dk_acc = dk_acc + ds_m * q_vec_m * scale_t;
     }
     T::atomic_add(dk_ptr.add_offsets(d + row_base), dk_acc, None, None, None);
-    T::store(dv_ptr.add_offsets(d + row_base), dv_acc, None, &[], None, None);
+    T::store(
+        dv_ptr.add_offsets(d + row_base),
+        dv_acc,
+        None,
+        &[],
+        None,
+        None,
+    );
 }
 
 // ── CustomOp wrappers ─────────────────────────────────────────────────────────
@@ -749,12 +994,17 @@ pub struct PsaPackQkvOp<D: Float + Send + Sync + 'static> {
 impl<D: Float + Send + Sync + 'static> PsaPackQkvOp<D> {
     /// Creates the graph op for the given key dimension and head count.
     pub fn new(key_dim: i32, num_heads: usize) -> Self {
-        Self { inner: Arc::new(PsaPackQkvRuntimeOp::<D>::new(key_dim, num_heads)), num_heads }
+        Self {
+            inner: Arc::new(PsaPackQkvRuntimeOp::<D>::new(key_dim, num_heads)),
+            num_heads,
+        }
     }
 }
 
 impl<D: Float + Send + Sync + 'static> CustomOp for PsaPackQkvOp<D> {
-    fn name(&self) -> &str { "psa_pack_qkv" }
+    fn name(&self) -> &str {
+        "psa_pack_qkv"
+    }
 
     /// Output shape: `[B, 4, num_heads, N, KEY_DIM]`
     ///
@@ -764,18 +1014,20 @@ impl<D: Float + Send + Sync + 'static> CustomOp for PsaPackQkvOp<D> {
     /// stored as `None` and resolved to `batch_size` instead of
     /// `batch_size * num_heads`.
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
-        let s = input_shapes[0];  // [B, qkv_h, H, W]
+        let s = input_shapes[0]; // [B, qkv_h, H, W]
         let nh = self.num_heads;
         vec![
-            s[0],                   // B (dynamic)
-            Some(4),                // sections
-            Some(nh),               // num_heads
+            s[0],                                   // B (dynamic)
+            Some(4),                                // sections
+            Some(nh),                               // num_heads
             s[2].and_then(|h| s[3].map(|w| h * w)), // N = H * W
-            s[1].map(|qkv_h| qkv_h / (nh * 4)),    // KEY_DIM
+            s[1].map(|qkv_h| qkv_h / (nh * 4)),     // KEY_DIM
         ]
     }
 
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 
     fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
         Some((
@@ -804,14 +1056,18 @@ impl<D: Float + Send + Sync + 'static> PsaExtractVOp<D> {
 }
 
 impl<D: Float + Send + Sync + 'static> CustomOp for PsaExtractVOp<D> {
-    fn name(&self) -> &str { "psa_extract_v_nchw" }
+    fn name(&self) -> &str {
+        "psa_extract_v_nchw"
+    }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
         let s = input_shapes[0];
         vec![s[0], s[1].map(|qkv_h| qkv_h / 2), s[2], s[3]]
     }
 
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 
     fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
         Some((
@@ -843,26 +1099,35 @@ pub struct PsaMergeAttnOp<D: Float + Send + Sync + 'static> {
 impl<D: Float + Send + Sync + 'static> PsaMergeAttnOp<D> {
     /// Creates the graph op for the given key dimension, head count, and output spatial size.
     pub fn new(key_dim: i32, num_heads: usize, h: usize, w: usize) -> Self {
-        Self { inner: Arc::new(PsaMergeAttnRuntimeOp::<D>::new(key_dim, num_heads)), num_heads, h, w }
+        Self {
+            inner: Arc::new(PsaMergeAttnRuntimeOp::<D>::new(key_dim, num_heads)),
+            num_heads,
+            h,
+            w,
+        }
     }
 }
 
 impl<D: Float + Send + Sync + 'static> CustomOp for PsaMergeAttnOp<D> {
-    fn name(&self) -> &str { "psa_merge_attn_nchw" }
+    fn name(&self) -> &str {
+        "psa_merge_attn_nchw"
+    }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
         // input: [B, num_heads, N, KEY_DIM]  →  output: [B, c, H, W]
         let lo = input_shapes[0];
         let nh = self.num_heads;
         vec![
-            lo[0],                          // B
-            lo[3].map(|kd| nh * 2 * kd),   // c = num_heads * 2 * KEY_DIM
+            lo[0],                       // B
+            lo[3].map(|kd| nh * 2 * kd), // c = num_heads * 2 * KEY_DIM
             Some(self.h),
             Some(self.w),
         ]
     }
 
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 
     fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
         Some((
@@ -896,7 +1161,9 @@ impl<D: Float + Send + Sync + 'static> FlashAttn2PsaOp<D> {
 }
 
 impl<D: Float + Send + Sync + 'static> CustomOp for FlashAttn2PsaOp<D> {
-    fn name(&self) -> &str { "flash_attention2_forward" }
+    fn name(&self) -> &str {
+        "flash_attention2_forward"
+    }
 
     fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
         // input: [B, 4, num_heads, N, KEY_DIM]  →  output: [B, num_heads, N, KEY_DIM]
@@ -904,7 +1171,9 @@ impl<D: Float + Send + Sync + 'static> CustomOp for FlashAttn2PsaOp<D> {
         vec![s[0], s[2], s[3], s[4]]
     }
 
-    fn as_any(&self) -> &dyn Any { self }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 
     fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
         Some((
@@ -936,29 +1205,45 @@ pub struct FlashAttn2PsaRuntimeOp<D: Float + Send + Sync + 'static> {
 impl<D: Float + Send + Sync + 'static> FlashAttn2PsaRuntimeOp<D> {
     /// Attention on V_lo (section index 2).
     pub fn new_lo(key_dim: i32) -> Self {
-        Self { fwd: FlashAttention2Forward::<D>::new(key_dim), bwd: PsaFa2Backward::<D>::new(key_dim), v_section: 2 }
+        Self {
+            fwd: FlashAttention2Forward::<D>::new(key_dim),
+            bwd: PsaFa2Backward::<D>::new(key_dim),
+            v_section: 2,
+        }
     }
 
     /// Attention on V_hi (section index 3).
     pub fn new_hi(key_dim: i32) -> Self {
-        Self { fwd: FlashAttention2Forward::<D>::new(key_dim), bwd: PsaFa2Backward::<D>::new(key_dim), v_section: 3 }
+        Self {
+            fwd: FlashAttention2Forward::<D>::new(key_dim),
+            bwd: PsaFa2Backward::<D>::new(key_dim),
+            v_section: 3,
+        }
     }
 
     /// The forward kernel's function name.
-    pub fn kernel_name(&self) -> &str { self.fwd.name }
+    pub fn kernel_name(&self) -> &str {
+        self.fwd.name
+    }
     /// The forward kernel's generated source.
-    pub fn forward_source(&self) -> &str { &self.fwd.source }
+    pub fn forward_source(&self) -> &str {
+        &self.fwd.source
+    }
     /// The backward kernel's generated source.
-    pub fn backward_source(&self) -> &str { &self.bwd.source }
+    pub fn backward_source(&self) -> &str {
+        &self.bwd.source
+    }
 }
 
 impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for FlashAttn2PsaRuntimeOp<D> {
-    fn n_activation_inputs(&self) -> usize { 1 }
+    fn n_activation_inputs(&self) -> usize {
+        1
+    }
 
     fn param_shapes(&self, input_shapes: &[&[usize]], _: &[usize]) -> Vec<Vec<usize>> {
         // input_shapes[0] = [B, 4, num_heads, N, KEY_DIM]
         let bh = input_shapes[0][0] * input_shapes[0][2]; // B * num_heads
-        let n  = input_shapes[0][3];
+        let n = input_shapes[0][3];
         vec![vec![bh * n]] // l_ptr scratch
     }
 
@@ -972,9 +1257,9 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for FlashAtt
         visitor: &mut dyn teeny_core::device::program::ArgVisitor,
     ) {
         // inputs[0].1 = [B, 4, num_heads, N, KEY_DIM]
-        let b  = inputs[0].1[0];
+        let b = inputs[0].1[0];
         let nh = inputs[0].1[2];
-        let n  = inputs[0].1[3];
+        let n = inputs[0].1[3];
         let kd = inputs[0].1[4];
         let bh = b * nh; // BH = B * num_heads
         let section_elems = bh * n * kd;
@@ -996,15 +1281,19 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for FlashAtt
         visitor.visit_f32(f32::NEG_INFINITY);
     }
 
-    fn block(&self) -> [u32; 3] { [1, 1, 1] }
-
     fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
         // output_shape = [B, num_heads, N, KEY_DIM]; FA2 grid = (N, BH, 1)
-        [output_shape[2] as u32, (output_shape[0] * output_shape[1]) as u32, 1]
+        [
+            output_shape[2] as u32,
+            (output_shape[0] * output_shape[1]) as u32,
+            1,
+        ]
     }
 
     #[cfg(feature = "training")]
-    fn has_backward(&self) -> bool { true }
+    fn has_backward(&self) -> bool {
+        true
+    }
 
     /// kernel args: q, k, v, o, do, l, dq, dk, dv, N, softmax_scale
     #[cfg(feature = "training")]
@@ -1021,9 +1310,9 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for FlashAtt
         visitor: &mut dyn teeny_core::device::program::ArgVisitor,
     ) {
         // inputs[0].1 = [B, 4, num_heads, N, KEY_DIM]
-        let b  = inputs[0].1[0];
+        let b = inputs[0].1[0];
         let nh = inputs[0].1[2];
-        let n  = inputs[0].1[3];
+        let n = inputs[0].1[3];
         let kd = inputs[0].1[4];
         let bh = b * nh;
         let section_elems = bh * n * kd;
@@ -1044,23 +1333,24 @@ impl<D: Float + Send + Sync + 'static> teeny_core::model::RuntimeOp for FlashAtt
         visitor.visit_ptr(q_ptr);
         visitor.visit_ptr(k_ptr);
         visitor.visit_ptr(v_ptr);
-        visitor.visit_ptr(output);       // o_ptr
-        visitor.visit_ptr(grad_output);  // do_ptr
-        visitor.visit_ptr(params[0]);    // l_ptr
+        visitor.visit_ptr(output); // o_ptr
+        visitor.visit_ptr(grad_output); // do_ptr
+        visitor.visit_ptr(params[0]); // l_ptr
         visitor.visit_ptr(dq_ptr);
         visitor.visit_ptr(dk_ptr);
         visitor.visit_ptr(dv_ptr);
-        visitor.visit_i32(n as i32);     // N
+        visitor.visit_i32(n as i32); // N
         visitor.visit_f32(softmax_scale);
     }
-
-    #[cfg(feature = "training")]
-    fn backward_block(&self) -> [u32; 3] { [1, 1, 1] }
 
     /// Grid over `(N, BH, 1)` — same shape as the forward pass.
     #[cfg(feature = "training")]
     fn backward_grid(&self, _input_shapes: &[&[usize]], output_shape: &[usize]) -> [u32; 3] {
         // output_shape = [B, num_heads, N, KEY_DIM]
-        [output_shape[2] as u32, (output_shape[0] * output_shape[1]) as u32, 1]
+        [
+            output_shape[2] as u32,
+            (output_shape[0] * output_shape[1]) as u32,
+            1,
+        ]
     }
 }

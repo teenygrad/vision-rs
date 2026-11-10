@@ -2,9 +2,13 @@ name: Rust CI
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
+      - 'release/**'
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
+      - 'release/**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,31 +17,9 @@ jobs:
   build-test-clippy:
     name: Build, test, clippy
     runs-on: ubuntu-latest
-    # Cargo.toml's [patch.crates-io] section unconditionally resolves
-    # teeny-* deps to ../teenygrad/... (every cargo invocation reads it,
-    # regardless of which features are enabled) -- must exist as an actual
-    # sibling directory, matching the local dev layout. actions/checkout
-    # refuses a path outside github.workspace (confirmed via a live failed
-    # run: "Repository path '.../teenygrad' is not under '.../vision-rs'"),
-    # so both repos are checked out as sibling *subdirectories* of the
-    # workspace instead, with this job's working directory pointed at the
-    # vision-rs one -- ../teenygrad from there resolves to the teenygrad
-    # subdirectory, a true sibling on disk either way.
-    defaults:
-      run:
-        working-directory: vision-rs
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          path: vision-rs
-
-      - name: Checkout teenygrad (sibling dependency)
-        uses: actions/checkout@v4
-        with:
-          repository: teenygrad/teenygrad
-          path: teenygrad
-          submodules: true
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -46,8 +28,6 @@ jobs:
 
       - name: Cache cargo registry and build artifacts
         uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: vision-rs
 
       # The cuda feature (on by default) pulls in teeny-cuda, whose build.rs
       # unconditionally runs bindgen against real CUDA headers. Installed
@@ -57,10 +37,10 @@ jobs:
       # nvidia-driver/nvidia-dkms packages, which fail to configure on
       # hosted runners with no matching kernel). Only the -dev packages
       # build.rs actually links against are installed -- no driver/dkms.
-      # cuda-profiler-api-13-2 is a separate package from cuda-cudart-dev
+      # cuda-profiler-api-13-4 is a separate package from cuda-cudart-dev
       # (confirmed via `dpkg -S cuda_profiler_api.h` -- teeny-cuda's
       # wrapper.h includes it directly). The nvcc-config-common package
-      # symlinks /usr/local/cuda -> /usr/local/cuda-13.2 via
+      # symlinks /usr/local/cuda -> /usr/local/cuda-13.4 via
       # update-alternatives but does NOT put /usr/local/cuda/bin on PATH --
       # add it explicitly so bindgen finds it (the same omission has been
       # silently skipping teeny-cuda/teeny-kernels docs in teenygrad's own
@@ -71,17 +51,21 @@ jobs:
           sudo dpkg -i /tmp/cuda-keyring.deb
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cuda-nvcc-13-2 cuda-cudart-dev-13-2 cuda-nvrtc-dev-13-2 cuda-driver-dev-13-2 cuda-profiler-api-13-2
+            cuda-nvcc-13-4 cuda-cudart-dev-13-4 cuda-nvrtc-dev-13-4 cuda-driver-dev-13-4 cuda-profiler-api-13-4
           echo "/usr/local/cuda/bin" >> "$GITHUB_PATH"
 
       - name: Build
         run: cargo build --all-features
 
       - name: Clippy
-        # --all-targets is deliberately omitted: examples/yolo26.rs (a large,
-        # separate CLI tool) has pre-existing clippy/fmt debt out of scope
-        # for this pass. Default clippy (lib + bins only) doesn't touch it.
-        run: cargo clippy --all-features -- -D warnings
+        # Every member (the parking-garage demo too) and every target, tests and
+        # examples included, under both the full feature set and the CUDA-free one.
+        run: |
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo clippy --workspace --all-targets --no-default-features -- -D warnings
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
       # Even the hardware-independent snapshot tests (comparing generated
       # PTX/MLIR text, not running it) call compile_kernel, which shells
@@ -91,7 +75,7 @@ jobs:
       # fetches a prebuilt release rather than building teenyc from source.
       - name: Install teenyc toolchain
         run: |
-          cargo install --git https://github.com/teenygrad/cargo-teeny
+          cargo install cargo-teeny
           cargo teeny install-toolchain
           echo "TEENYC_PATH=$HOME/.rustup/toolchains/stable-teenyc-x86_64-unknown-linux-gnu/bin/teenyc" >> "$GITHUB_ENV"
 

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // YOLO26 Detect head cv2[0] branch — end-to-end CUDA forward-pass test.
 //
 // Parameters: Detect(nc=80, ch=[256,512,512]), single-scale (P3, c_in=256),
@@ -41,32 +40,33 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
+    use teeny_cuda::{device::CudaLaunchConfig, errors::Result};
+    use teeny_test::cuda as testing;
 
     // ── Dimensions ────────────────────────────────────────────────────────────────
 
-    const B:      usize = 1;
-    const C_IN:   usize = 256;
-    const C2:     usize = 64;   // max(16, C_IN/4, reg_max*4) = max(16,64,4) = 64
-    const C_BOX:  usize = 4;    // reg_max * 4 = 1 * 4 = 4
-    const H:      usize = 4;
-    const W:      usize = 4;
+    const B: usize = 1;
+    const C_IN: usize = 256;
+    const C2: usize = 64; // max(16, C_IN/4, reg_max*4) = max(16,64,4) = 64
+    const C_BOX: usize = 4; // reg_max * 4 = 1 * 4 = 4
+    const H: usize = 4;
+    const W: usize = 4;
 
     const N_SPATIAL: usize = B * H * W; // 16
 
     // Element counts for each stage (NCHW flat = NC flat = same total size)
-    const N_CONV1: usize = B * C2   * H * W; //  1 024  (B, 64, 4, 4)
-    const N_CONV2: usize = B * C2   * H * W; //  1 024  (B, 64, 4, 4)
+    const N_CONV1: usize = B * C2 * H * W; //  1 024  (B, 64, 4, 4)
+    const N_CONV2: usize = B * C2 * H * W; //  1 024  (B, 64, 4, 4)
     const N_CONV3: usize = B * C_BOX * H * W; //    64   (B,  4, 4, 4)
 
     // Kernel tuning
-    const BLOCK_OW:   i32 = 4;   // conv output-column tile (matches W=4 exactly)
-    const BLOCK_BN:   i32 = 128;
+    const BLOCK_OW: i32 = 4; // conv output-column tile (matches W=4 exactly)
+    const BLOCK_BN: i32 = 128;
     const BLOCK_SILU: i32 = 128;
     const BLOCK_BIAS: i32 = 128;
-    const BN_EPS:     f32 = 1e-5;
+    const BN_EPS: f32 = 1e-5;
 
     // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -76,10 +76,11 @@ mod cuda {
             env!("CARGO_MANIFEST_DIR"),
             name
         );
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -92,8 +93,7 @@ mod cuda {
                 for hi in 0..h {
                     for wi in 0..w {
                         let ni = bi * h * w + hi * w + wi;
-                        out[ni * c + ci] =
-                            src[bi * c * h * w + ci * h * w + hi * w + wi];
+                        out[ni * c + ci] = src[bi * c * h * w + ci * h * w + hi * w + wi];
                     }
                 }
             }
@@ -109,8 +109,7 @@ mod cuda {
                 for hi in 0..h {
                     for wi in 0..w {
                         let ni = bi * h * w + hi * w + wi;
-                        out[bi * c * h * w + ci * h * w + hi * w + wi] =
-                            src[ni * c + ci];
+                        out[bi * c * h * w + ci * h * w + hi * w + wi] = src[ni * c + ci];
                     }
                 }
             }
@@ -129,27 +128,27 @@ mod cuda {
         let target = Target::new(env.capability);
 
         // ── Load fixtures ──────────────────────────────────────────────────────────
-        let x_host      = load("x.bin");
-        let conv1_w     = load("conv1_w.bin");
-        let conv1_bn_w  = load("conv1_bn_w.bin");
-        let conv1_bn_b  = load("conv1_bn_b.bin");
+        let x_host = load("x.bin");
+        let conv1_w = load("conv1_w.bin");
+        let conv1_bn_w = load("conv1_bn_w.bin");
+        let conv1_bn_b = load("conv1_bn_b.bin");
         let conv1_bn_rm = load("conv1_bn_rm.bin");
         let conv1_bn_rv = load("conv1_bn_rv.bin");
-        let conv2_w     = load("conv2_w.bin");
-        let conv2_bn_w  = load("conv2_bn_w.bin");
-        let conv2_bn_b  = load("conv2_bn_b.bin");
+        let conv2_w = load("conv2_w.bin");
+        let conv2_bn_w = load("conv2_bn_w.bin");
+        let conv2_bn_b = load("conv2_bn_b.bin");
         let conv2_bn_rm = load("conv2_bn_rm.bin");
         let conv2_bn_rv = load("conv2_bn_rv.bin");
-        let conv3_w     = load("conv3_w.bin");
-        let conv3_bias  = load("conv3_bias.bin");
-        let expected    = load("expected_output.bin");
+        let conv3_w = load("conv3_w.bin");
+        let conv3_bias = load("conv3_bias.bin");
+        let expected = load("expected_output.bin");
 
-        assert_eq!(x_host.len(),      B * C_IN * H * W);
-        assert_eq!(conv1_w.len(),     C2 * C_IN * 9);     // [64, 256, 3, 3]
-        assert_eq!(conv2_w.len(),     C2 * C2 * 9);       // [64,  64, 3, 3]
-        assert_eq!(conv3_w.len(),     C_BOX * C2);        // [ 4,  64, 1, 1]
-        assert_eq!(conv3_bias.len(),  C_BOX);             // [4]
-        assert_eq!(expected.len(),    B * C_BOX * H * W);
+        assert_eq!(x_host.len(), B * C_IN * H * W);
+        assert_eq!(conv1_w.len(), C2 * C_IN * 9); // [64, 256, 3, 3]
+        assert_eq!(conv2_w.len(), C2 * C2 * 9); // [64,  64, 3, 3]
+        assert_eq!(conv3_w.len(), C_BOX * C2); // [ 4,  64, 1, 1]
+        assert_eq!(conv3_bias.len(), C_BOX); // [4]
+        assert_eq!(expected.len(), B * C_BOX * H * W);
 
         // ── Compile kernels ────────────────────────────────────────────────────────
 
@@ -157,7 +156,7 @@ mod cuda {
         let conv3_kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
             3, 3, 1, 1, 1, 1, 1, BLOCK_OW,
         );
-        let conv3_ptx = std::fs::read(compile_kernel(&conv3_kernel, &target, true)?)?;
+        let conv3_ptx = std::fs::read(compile_kernel(&conv3_kernel, &target, true, false)?)?;
         let conv3_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dForward<f32>,
         >(&conv3_ptx)?;
@@ -166,28 +165,33 @@ mod cuda {
         let conv1_kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
             1, 1, 1, 1, 0, 0, 1, BLOCK_OW,
         );
-        let conv1_ptx = std::fs::read(compile_kernel(&conv1_kernel, &target, true)?)?;
+        let conv1_ptx = std::fs::read(compile_kernel(&conv1_kernel, &target, true, false)?)?;
         let conv1_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dForward<f32>,
         >(&conv1_ptx)?;
 
         // BatchNorm inference
-        let bn_kernel = teeny_kernels::nn::norm::batchnorm::BatchNormForwardInference::<f32>::new(BLOCK_BN);
-        let bn_ptx = std::fs::read(compile_kernel(&bn_kernel, &target, true)?)?;
+        let bn_kernel =
+            teeny_kernels::nn::norm::batchnorm::BatchNormForwardInference::<f32>::new(BLOCK_BN);
+        let bn_ptx = std::fs::read(compile_kernel(&bn_kernel, &target, true, false)?)?;
         let bn_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::norm::batchnorm::BatchNormForwardInference<f32>,
         >(&bn_ptx)?;
 
         // SiLU
-        let silu_kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU);
-        let silu_ptx = std::fs::read(compile_kernel(&silu_kernel, &target, true)?)?;
+        let silu_kernel =
+            teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SILU);
+        let silu_ptx = std::fs::read(compile_kernel(&silu_kernel, &target, true, false)?)?;
         let silu_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::sigmoid::SiluForward<f32>,
         >(&silu_ptx)?;
 
         // ChannelBiasAdd (NC layout, one CTA per channel)
-        let bias_kernel = teeny_kernels::nn::tensor::channel_bias_add::ChannelBiasAddForward::<f32>::new(BLOCK_BIAS);
-        let bias_ptx = std::fs::read(compile_kernel(&bias_kernel, &target, true)?)?;
+        let bias_kernel =
+            teeny_kernels::nn::tensor::channel_bias_add::ChannelBiasAddForward::<f32>::new(
+                BLOCK_BIAS,
+            );
+        let bias_ptx = std::fs::read(compile_kernel(&bias_kernel, &target, true, false)?)?;
         let bias_prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::channel_bias_add::ChannelBiasAddForward<f32>,
         >(&bias_ptx)?;
@@ -196,39 +200,51 @@ mod cuda {
         let ow_tiles = W.div_ceil(BLOCK_OW as usize);
 
         let bn_cfg = |c_ch: usize| CudaLaunchConfig {
-            grid: [c_ch as u32, 1, 1], block: [1, 1, 1], cluster: [1, 1, 1],
+            grid: [c_ch as u32, 1, 1],
+            block: [1, 1, 1],
+            cluster: [1, 1, 1],
         };
 
         // ── Stage 1: conv1  Conv(256→64, 3×3, s=1, p=1) ──────────────────────────
-        let mut x_buf        = device.buffer::<f32>(B * C_IN * H * W)?;
-        let mut conv1_w_buf  = device.buffer::<f32>(C2 * C_IN * 9)?;
-        let conv1_nchw       = device.buffer::<f32>(N_CONV1)?;
+        let mut x_buf = device.buffer::<f32>(B * C_IN * H * W)?;
+        let mut conv1_w_buf = device.buffer::<f32>(C2 * C_IN * 9)?;
+        let conv1_nchw = device.buffer::<f32>(N_CONV1)?;
 
         x_buf.to_device(&x_host)?;
         conv1_w_buf.to_device(&conv1_w)?;
 
-        device.launch(&conv3_prog, &CudaLaunchConfig {
-            grid:  [(B * C2 * H * ow_tiles) as u32, 1, 1],
-            block: [128, 1, 1], cluster: [1, 1, 1],
-        }, (
-            x_buf.as_device_ptr() as *mut f32,
-            conv1_w_buf.as_device_ptr() as *mut f32,
-            conv1_nchw.as_device_ptr() as *mut f32,
-            B as i32, C_IN as i32, C2 as i32,
-            H as i32, W as i32, H as i32, W as i32,
-        ))?;
+        device.launch(
+            &conv3_prog,
+            &CudaLaunchConfig {
+                grid: [(B * C2 * H * ow_tiles) as u32, 1, 1],
+                block: [128, 1, 1],
+                cluster: [1, 1, 1],
+            },
+            (
+                x_buf.as_device_ptr(),
+                conv1_w_buf.as_device_ptr(),
+                conv1_nchw.as_device_ptr(),
+                B as i32,
+                C_IN as i32,
+                C2 as i32,
+                H as i32,
+                W as i32,
+                H as i32,
+                W as i32,
+            ),
+        )?;
 
         // ── Stage 1b: conv1 BN + SiLU ─────────────────────────────────────────────
         let mut tmp = vec![0.0f32; N_CONV1];
         conv1_nchw.to_host(&mut tmp)?;
         let conv1_nc_host = nchw_to_nc(&tmp, B, C2, H, W);
 
-        let mut conv1_nc_buf  = device.buffer::<f32>(N_CONV1)?;
-        let conv1_bn_out      = device.buffer::<f32>(N_CONV1)?;
+        let mut conv1_nc_buf = device.buffer::<f32>(N_CONV1)?;
+        let conv1_bn_out = device.buffer::<f32>(N_CONV1)?;
         let mut conv1_bnw_buf = device.buffer::<f32>(C2)?;
         let mut conv1_bnb_buf = device.buffer::<f32>(C2)?;
-        let mut conv1_bnrm    = device.buffer::<f32>(C2)?;
-        let mut conv1_bnrv    = device.buffer::<f32>(C2)?;
+        let mut conv1_bnrm = device.buffer::<f32>(C2)?;
+        let mut conv1_bnrv = device.buffer::<f32>(C2)?;
 
         conv1_nc_buf.to_device(&conv1_nc_host)?;
         conv1_bnw_buf.to_device(&conv1_bn_w)?;
@@ -236,22 +252,32 @@ mod cuda {
         conv1_bnrm.to_device(&conv1_bn_rm)?;
         conv1_bnrv.to_device(&conv1_bn_rv)?;
 
-        device.launch(&bn_prog, &bn_cfg(C2), (
-            conv1_nc_buf.as_device_ptr() as *mut f32,
-            conv1_bn_out.as_device_ptr() as *mut f32,
-            conv1_bnw_buf.as_device_ptr() as *mut f32,
-            conv1_bnb_buf.as_device_ptr() as *mut f32,
-            conv1_bnrm.as_device_ptr() as *mut f32,
-            conv1_bnrv.as_device_ptr() as *mut f32,
-            N_SPATIAL as i32, C2 as i32, BN_EPS,
-        ))?;
+        device.launch(
+            &bn_prog,
+            &bn_cfg(C2),
+            (
+                conv1_nc_buf.as_device_ptr(),
+                conv1_bn_out.as_device_ptr(),
+                conv1_bnw_buf.as_device_ptr(),
+                conv1_bnb_buf.as_device_ptr(),
+                conv1_bnrm.as_device_ptr(),
+                conv1_bnrv.as_device_ptr(),
+                N_SPATIAL as i32,
+                C2 as i32,
+                BN_EPS,
+            ),
+        )?;
 
         let conv1_silu = device.buffer::<f32>(N_CONV1)?;
-        device.launch(&silu_prog, &testing::launch_config(N_CONV1, BLOCK_SILU), (
-            conv1_bn_out.as_device_ptr() as *mut f32,
-            conv1_silu.as_device_ptr() as *mut f32,
-            N_CONV1 as i32,
-        ))?;
+        device.launch(
+            &silu_prog,
+            &testing::launch_config(N_CONV1, BLOCK_SILU),
+            (
+                conv1_bn_out.as_device_ptr(),
+                conv1_silu.as_device_ptr(),
+                N_CONV1 as i32,
+            ),
+        )?;
 
         // Convert NC → NCHW for the next conv kernel
         let mut conv1_silu_host = vec![0.0f32; N_CONV1];
@@ -263,32 +289,42 @@ mod cuda {
 
         // ── Stage 2: conv2  Conv(64→64, 3×3, s=1, p=1) ───────────────────────────
         let mut conv2_w_buf = device.buffer::<f32>(C2 * C2 * 9)?;
-        let conv2_nchw      = device.buffer::<f32>(N_CONV2)?;
+        let conv2_nchw = device.buffer::<f32>(N_CONV2)?;
 
         conv2_w_buf.to_device(&conv2_w)?;
 
-        device.launch(&conv3_prog, &CudaLaunchConfig {
-            grid:  [(B * C2 * H * ow_tiles) as u32, 1, 1],
-            block: [128, 1, 1], cluster: [1, 1, 1],
-        }, (
-            conv1_silu_nchw_buf.as_device_ptr() as *mut f32,
-            conv2_w_buf.as_device_ptr() as *mut f32,
-            conv2_nchw.as_device_ptr() as *mut f32,
-            B as i32, C2 as i32, C2 as i32,
-            H as i32, W as i32, H as i32, W as i32,
-        ))?;
+        device.launch(
+            &conv3_prog,
+            &CudaLaunchConfig {
+                grid: [(B * C2 * H * ow_tiles) as u32, 1, 1],
+                block: [128, 1, 1],
+                cluster: [1, 1, 1],
+            },
+            (
+                conv1_silu_nchw_buf.as_device_ptr(),
+                conv2_w_buf.as_device_ptr(),
+                conv2_nchw.as_device_ptr(),
+                B as i32,
+                C2 as i32,
+                C2 as i32,
+                H as i32,
+                W as i32,
+                H as i32,
+                W as i32,
+            ),
+        )?;
 
         // ── Stage 2b: conv2 BN + SiLU ─────────────────────────────────────────────
         let mut tmp = vec![0.0f32; N_CONV2];
         conv2_nchw.to_host(&mut tmp)?;
         let conv2_nc_host = nchw_to_nc(&tmp, B, C2, H, W);
 
-        let mut conv2_nc_buf  = device.buffer::<f32>(N_CONV2)?;
-        let conv2_bn_out      = device.buffer::<f32>(N_CONV2)?;
+        let mut conv2_nc_buf = device.buffer::<f32>(N_CONV2)?;
+        let conv2_bn_out = device.buffer::<f32>(N_CONV2)?;
         let mut conv2_bnw_buf = device.buffer::<f32>(C2)?;
         let mut conv2_bnb_buf = device.buffer::<f32>(C2)?;
-        let mut conv2_bnrm    = device.buffer::<f32>(C2)?;
-        let mut conv2_bnrv    = device.buffer::<f32>(C2)?;
+        let mut conv2_bnrm = device.buffer::<f32>(C2)?;
+        let mut conv2_bnrv = device.buffer::<f32>(C2)?;
 
         conv2_nc_buf.to_device(&conv2_nc_host)?;
         conv2_bnw_buf.to_device(&conv2_bn_w)?;
@@ -296,22 +332,32 @@ mod cuda {
         conv2_bnrm.to_device(&conv2_bn_rm)?;
         conv2_bnrv.to_device(&conv2_bn_rv)?;
 
-        device.launch(&bn_prog, &bn_cfg(C2), (
-            conv2_nc_buf.as_device_ptr() as *mut f32,
-            conv2_bn_out.as_device_ptr() as *mut f32,
-            conv2_bnw_buf.as_device_ptr() as *mut f32,
-            conv2_bnb_buf.as_device_ptr() as *mut f32,
-            conv2_bnrm.as_device_ptr() as *mut f32,
-            conv2_bnrv.as_device_ptr() as *mut f32,
-            N_SPATIAL as i32, C2 as i32, BN_EPS,
-        ))?;
+        device.launch(
+            &bn_prog,
+            &bn_cfg(C2),
+            (
+                conv2_nc_buf.as_device_ptr(),
+                conv2_bn_out.as_device_ptr(),
+                conv2_bnw_buf.as_device_ptr(),
+                conv2_bnb_buf.as_device_ptr(),
+                conv2_bnrm.as_device_ptr(),
+                conv2_bnrv.as_device_ptr(),
+                N_SPATIAL as i32,
+                C2 as i32,
+                BN_EPS,
+            ),
+        )?;
 
         let conv2_silu = device.buffer::<f32>(N_CONV2)?;
-        device.launch(&silu_prog, &testing::launch_config(N_CONV2, BLOCK_SILU), (
-            conv2_bn_out.as_device_ptr() as *mut f32,
-            conv2_silu.as_device_ptr() as *mut f32,
-            N_CONV2 as i32,
-        ))?;
+        device.launch(
+            &silu_prog,
+            &testing::launch_config(N_CONV2, BLOCK_SILU),
+            (
+                conv2_bn_out.as_device_ptr(),
+                conv2_silu.as_device_ptr(),
+                N_CONV2 as i32,
+            ),
+        )?;
 
         // Convert NC → NCHW for the plain 1×1 conv
         let mut conv2_silu_host = vec![0.0f32; N_CONV2];
@@ -322,45 +368,59 @@ mod cuda {
         conv2_silu_nchw_buf.to_device(&conv2_silu_nchw)?;
 
         // ── Stage 3: conv3  plain Conv2d(64→4, 1×1, no BN) ───────────────────────
-        let mut conv3_w_buf  = device.buffer::<f32>(C_BOX * C2)?;
-        let conv3_nchw       = device.buffer::<f32>(N_CONV3)?;
+        let mut conv3_w_buf = device.buffer::<f32>(C_BOX * C2)?;
+        let conv3_nchw = device.buffer::<f32>(N_CONV3)?;
 
         conv3_w_buf.to_device(&conv3_w)?;
 
-        device.launch(&conv1_prog, &CudaLaunchConfig {
-            grid:  [(B * C_BOX * H * ow_tiles) as u32, 1, 1],
-            block: [128, 1, 1], cluster: [1, 1, 1],
-        }, (
-            conv2_silu_nchw_buf.as_device_ptr() as *mut f32,
-            conv3_w_buf.as_device_ptr() as *mut f32,
-            conv3_nchw.as_device_ptr() as *mut f32,
-            B as i32, C2 as i32, C_BOX as i32,
-            H as i32, W as i32, H as i32, W as i32,
-        ))?;
+        device.launch(
+            &conv1_prog,
+            &CudaLaunchConfig {
+                grid: [(B * C_BOX * H * ow_tiles) as u32, 1, 1],
+                block: [128, 1, 1],
+                cluster: [1, 1, 1],
+            },
+            (
+                conv2_silu_nchw_buf.as_device_ptr(),
+                conv3_w_buf.as_device_ptr(),
+                conv3_nchw.as_device_ptr(),
+                B as i32,
+                C2 as i32,
+                C_BOX as i32,
+                H as i32,
+                W as i32,
+                H as i32,
+                W as i32,
+            ),
+        )?;
 
         // ── Stage 3b: add bias (ChannelBiasAdd in NC layout) ──────────────────────
         let mut tmp = vec![0.0f32; N_CONV3];
         conv3_nchw.to_host(&mut tmp)?;
         let conv3_nc_host = nchw_to_nc(&tmp, B, C_BOX, H, W);
 
-        let mut conv3_nc_buf  = device.buffer::<f32>(N_CONV3)?;
-        let conv3_bias_out    = device.buffer::<f32>(N_CONV3)?;
-        let mut bias_buf      = device.buffer::<f32>(C_BOX)?;
+        let mut conv3_nc_buf = device.buffer::<f32>(N_CONV3)?;
+        let conv3_bias_out = device.buffer::<f32>(N_CONV3)?;
+        let mut bias_buf = device.buffer::<f32>(C_BOX)?;
 
         conv3_nc_buf.to_device(&conv3_nc_host)?;
         bias_buf.to_device(&conv3_bias)?;
 
-        device.launch(&bias_prog, &CudaLaunchConfig {
-            grid:  [C_BOX as u32, 1, 1],
-            block: [BLOCK_BIAS as u32, 1, 1],
-            cluster: [1, 1, 1],
-        }, (
-            conv3_nc_buf.as_device_ptr() as *mut f32,
-            bias_buf.as_device_ptr() as *mut f32,
-            conv3_bias_out.as_device_ptr() as *mut f32,
-            N_SPATIAL as i32,
-            C_BOX as i32,
-        ))?;
+        device.launch(
+            &bias_prog,
+            &CudaLaunchConfig {
+                grid: [C_BOX as u32, 1, 1],
+                block: [BLOCK_BIAS as u32, 1, 1],
+                cluster: [1, 1, 1],
+            },
+            (
+                conv3_nc_buf.as_device_ptr(),
+                bias_buf.as_device_ptr(),
+                conv3_bias_out.as_device_ptr(),
+                N_SPATIAL as i32,
+                C_BOX as i32,
+            ),
+        )?;
 
         // ── Compare ───────────────────────────────────────────────────────────────
         // GPU output is NC (N=B*H*W=16, C=C_BOX=4).
@@ -373,7 +433,8 @@ mod cuda {
             assert!(
                 (y_nc[i] - expected_nc[i]).abs() < 1e-3,
                 "detect cv2[0] mismatch at element {i}: gpu={} expected={}",
-                y_nc[i], expected_nc[i],
+                y_nc[i],
+                expected_nc[i],
             );
         }
 

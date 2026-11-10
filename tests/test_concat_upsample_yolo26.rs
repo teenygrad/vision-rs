@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Graph-level tests for the Concat and Upsample blocks.
 //
 // Concat  — channels cat of two NCHW tensors along dim 1.
@@ -38,37 +37,84 @@ fn sym_input(c: usize, h: usize, w: usize) -> SymTensor {
 fn sym_two_inputs(c0: usize, c1: usize, h: usize, w: usize) -> (SymTensor, SymTensor) {
     let (x0, graph) = SymTensor::input(DtypeRepr::F32, vec![Some(2), Some(c0), Some(h), Some(w)]);
     let shape1 = vec![Some(2), Some(c1), Some(h), Some(w)];
-    let node_id = graph.borrow_mut().add_node(Op::Input, vec![], DtypeRepr::F32, shape1.clone());
-    let x1 = SymTensor { node_id, graph: x0.graph.clone(), dtype: x0.dtype, shape: shape1 };
+    let node_id = graph
+        .borrow_mut()
+        .add_node(Op::Input, vec![], DtypeRepr::F32, shape1.clone());
+    let x1 = SymTensor {
+        node_id,
+        graph: x0.graph.clone(),
+        dtype: x0.dtype,
+        shape: shape1,
+    };
     (x0, x1)
 }
 
 /// Create three inputs that share the same graph.
-fn sym_three_inputs(c0: usize, c1: usize, c2: usize, h: usize, w: usize) -> (SymTensor, SymTensor, SymTensor) {
+fn sym_three_inputs(
+    c0: usize,
+    c1: usize,
+    c2: usize,
+    h: usize,
+    w: usize,
+) -> (SymTensor, SymTensor, SymTensor) {
     let (x0, graph) = SymTensor::input(DtypeRepr::F32, vec![Some(2), Some(c0), Some(h), Some(w)]);
     let s1 = vec![Some(2), Some(c1), Some(h), Some(w)];
     let s2 = vec![Some(2), Some(c2), Some(h), Some(w)];
-    let nid1 = graph.borrow_mut().add_node(Op::Input, vec![], DtypeRepr::F32, s1.clone());
-    let nid2 = graph.borrow_mut().add_node(Op::Input, vec![], DtypeRepr::F32, s2.clone());
-    let x1 = SymTensor { node_id: nid1, graph: x0.graph.clone(), dtype: x0.dtype, shape: s1 };
-    let x2 = SymTensor { node_id: nid2, graph: x0.graph.clone(), dtype: x0.dtype, shape: s2 };
+    let nid1 = graph
+        .borrow_mut()
+        .add_node(Op::Input, vec![], DtypeRepr::F32, s1.clone());
+    let nid2 = graph
+        .borrow_mut()
+        .add_node(Op::Input, vec![], DtypeRepr::F32, s2.clone());
+    let x1 = SymTensor {
+        node_id: nid1,
+        graph: x0.graph.clone(),
+        dtype: x0.dtype,
+        shape: s1,
+    };
+    let x2 = SymTensor {
+        node_id: nid2,
+        graph: x0.graph.clone(),
+        dtype: x0.dtype,
+        shape: s2,
+    };
     (x0, x1, x2)
 }
 
 /// Create two inputs with different spatial sizes on the same graph (for upsample+concat tests).
-fn sym_two_inputs_diff_spatial(c: usize, h0: usize, w0: usize, h1: usize, w1: usize) -> (SymTensor, SymTensor) {
+fn sym_two_inputs_diff_spatial(
+    c: usize,
+    h0: usize,
+    w0: usize,
+    h1: usize,
+    w1: usize,
+) -> (SymTensor, SymTensor) {
     let (x0, graph) = SymTensor::input(DtypeRepr::F32, vec![Some(2), Some(c), Some(h0), Some(w0)]);
     let shape1 = vec![Some(2), Some(c), Some(h1), Some(w1)];
-    let node_id = graph.borrow_mut().add_node(Op::Input, vec![], DtypeRepr::F32, shape1.clone());
-    let x1 = SymTensor { node_id, graph: x0.graph.clone(), dtype: x0.dtype, shape: shape1 };
+    let node_id = graph
+        .borrow_mut()
+        .add_node(Op::Input, vec![], DtypeRepr::F32, shape1.clone());
+    let x1 = SymTensor {
+        node_id,
+        graph: x0.graph.clone(),
+        dtype: x0.dtype,
+        shape: shape1,
+    };
     (x0, x1)
 }
 
 fn count_op(y: &SymTensor, pred: impl Fn(&Op) -> bool) -> usize {
-    y.graph.borrow().nodes.iter().filter(|n| pred(&n.op)).count()
+    y.graph
+        .borrow()
+        .nodes
+        .iter()
+        .filter(|n| pred(&n.op))
+        .count()
 }
 
-fn _unused_graph() -> Rc<RefCell<Graph>> { Rc::new(RefCell::new(Graph::new())) }
+fn _unused_graph() -> Rc<RefCell<Graph>> {
+    Rc::new(RefCell::new(Graph::new()))
+}
 
 // ── Concat ────────────────────────────────────────────────────────────────────
 
@@ -117,7 +163,10 @@ fn test_upsample_2x_shape() {
 fn test_upsample_2x_op_count() {
     let x = sym_input(64, 20, 20);
     let y = upsample(2, 2)(x);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::UpsampleNearest2d { .. })), 1);
+    assert_eq!(
+        count_op(&y, |op| matches!(op, Op::UpsampleNearest2d { .. })),
+        1
+    );
     // Input + UpsampleNearest2d = 2 nodes
     assert_eq!(y.graph.borrow().nodes.len(), 2);
 }
@@ -146,6 +195,9 @@ fn test_upsample_then_concat_shape() {
     let p5_up = upsample(2, 2)(p5);
     let y = concat()(vec![p5_up, p4]);
     assert_eq!(y.shape, vec![Some(2), Some(512), Some(40), Some(40)]);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::UpsampleNearest2d { .. })), 1);
+    assert_eq!(
+        count_op(&y, |op| matches!(op, Op::UpsampleNearest2d { .. })),
+        1
+    );
     assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })), 1);
 }

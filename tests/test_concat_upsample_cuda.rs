@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // End-to-end CUDA tests for Concat (forward + backward) and Upsample
 // (forward + backward) in NCHW layout.
 //
@@ -30,31 +29,32 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
+    use teeny_cuda::{device::CudaLaunchConfig, errors::Result};
+    use teeny_test::cuda as testing;
 
     // ── Dimensions ────────────────────────────────────────────────────────────
-    const B:       usize = 2;
-    const C0:      usize = 16;
-    const C1:      usize = 16;
+    const B: usize = 2;
+    const C0: usize = 16;
+    const C1: usize = 16;
     const C_TOTAL: usize = C0 + C1; // 32
-    const H:       usize = 4;
-    const W:       usize = 4;
+    const H: usize = 4;
+    const W: usize = 4;
 
     // Upsample
-    const C_UP:    usize = 16;
-    const SCALE:   i32   = 2;
-    const OH:      usize = H * SCALE as usize; // 8
-    const OW:      usize = W * SCALE as usize; // 8
+    const C_UP: usize = 16;
+    const SCALE: i32 = 2;
+    const OH: usize = H * SCALE as usize; // 8
+    const OW: usize = W * SCALE as usize; // 8
 
     // NC-layout interpretation for NCHW concat: N=B, C=C_i*H*W
     const CHUNK_C0_NC: i32 = (C0 * H * W) as i32; // 256
     const CHUNK_C1_NC: i32 = (C1 * H * W) as i32; // 256
-    const C_TOTAL_NC:  i32 = (C_TOTAL * H * W) as i32; // 512
+    const C_TOTAL_NC: i32 = (C_TOTAL * H * W) as i32; // 512
 
-    const BLOCK_CH:  i32 = 128;
-    const BLOCK_OW:  i32 = 4;
+    const BLOCK_CH: i32 = 128;
+    const BLOCK_OW: i32 = 4;
 
     fn load(name: &str) -> Vec<f32> {
         let path = format!(
@@ -62,9 +62,11 @@ mod cuda {
             env!("CARGO_MANIFEST_DIR"),
             name
         );
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
-        bytes.chunks_exact(4)
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -92,9 +94,10 @@ mod cuda {
         x0_buf.to_device(&x0)?;
         x1_buf.to_device(&x1)?;
 
-        let kernel = teeny_kernels::nn::tensor::channel_cat::ChannelCatForward::<f32>::new(BLOCK_CH);
+        let kernel =
+            teeny_kernels::nn::tensor::channel_cat::ChannelCatForward::<f32>::new(BLOCK_CH);
         let target = Target::new(env.capability);
-        let ptx = std::fs::read(compile_kernel(&kernel, &target, true)?)?;
+        let ptx = std::fs::read(compile_kernel(&kernel, &target, true, false)?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::channel_cat::ChannelCatForward<f32>,
         >(&ptx)?;
@@ -102,37 +105,52 @@ mod cuda {
         // Grid: N * ceil(chunk_c / BLOCK_CH) where N = B
         let num_c_tiles_0 = (CHUNK_C0_NC as usize).div_ceil(BLOCK_CH as usize);
         let cfg = CudaLaunchConfig {
-            grid:  [(B * num_c_tiles_0) as u32, 1, 1],
+            grid: [(B * num_c_tiles_0) as u32, 1, 1],
             block: [BLOCK_CH as u32, 1, 1],
             cluster: [1, 1, 1],
         };
 
         // Scatter x0 → channels [0, CHUNK_C0_NC)
-        device.launch(&program, &cfg, (
-            x0_buf.as_device_ptr() as *mut f32,
-            y_buf.as_device_ptr() as *mut f32,
-            CHUNK_C0_NC, C_TOTAL_NC, 0i32,
-        ))?;
+        device.launch(
+            &program,
+            &cfg,
+            (
+                x0_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
+                CHUNK_C0_NC,
+                C_TOTAL_NC,
+                0i32,
+            ),
+        )?;
 
         // Scatter x1 → channels [CHUNK_C0_NC, C_TOTAL_NC)
         let num_c_tiles_1 = (CHUNK_C1_NC as usize).div_ceil(BLOCK_CH as usize);
         let cfg1 = CudaLaunchConfig {
-            grid:  [(B * num_c_tiles_1) as u32, 1, 1],
+            grid: [(B * num_c_tiles_1) as u32, 1, 1],
             block: [BLOCK_CH as u32, 1, 1],
             cluster: [1, 1, 1],
         };
-        device.launch(&program, &cfg1, (
-            x1_buf.as_device_ptr() as *mut f32,
-            y_buf.as_device_ptr() as *mut f32,
-            CHUNK_C1_NC, C_TOTAL_NC, CHUNK_C0_NC,
-        ))?;
+        device.launch(
+            &program,
+            &cfg1,
+            (
+                x1_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
+                CHUNK_C1_NC,
+                C_TOTAL_NC,
+                CHUNK_C0_NC,
+            ),
+        )?;
 
         let mut y = vec![0.0f32; B * C_TOTAL * H * W];
         y_buf.to_host(&mut y)?;
 
         for i in 0..y.len() {
-            assert_eq!(y[i], expected[i],
-                "concat fwd mismatch at {i}: got={} expected={}", y[i], expected[i]);
+            assert_eq!(
+                y[i], expected[i],
+                "concat fwd mismatch at {i}: got={} expected={}",
+                y[i], expected[i]
+            );
         }
         Ok(())
     }
@@ -154,35 +172,48 @@ mod cuda {
         assert_eq!(exp_dx0.len(), B * C0 * H * W);
         assert_eq!(exp_dx1.len(), B * C1 * H * W);
 
-        let mut dy_buf  = device.buffer::<f32>(dy.len())?;
+        let mut dy_buf = device.buffer::<f32>(dy.len())?;
         let dx0_buf = device.buffer::<f32>(B * C0 * H * W)?;
         let dx1_buf = device.buffer::<f32>(B * C1 * H * W)?;
         dy_buf.to_device(&dy)?;
 
-        let kernel = teeny_kernels::nn::tensor::channel_cat::ChannelCatBackward::<f32>::new(BLOCK_CH);
+        let kernel =
+            teeny_kernels::nn::tensor::channel_cat::ChannelCatBackward::<f32>::new(BLOCK_CH);
         let target = Target::new(env.capability);
-        let ptx = std::fs::read(compile_kernel(&kernel, &target, true)?)?;
+        let ptx = std::fs::read(compile_kernel(&kernel, &target, true, false)?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::channel_cat::ChannelCatBackward<f32>,
         >(&ptx)?;
 
         let num_c_tiles = (CHUNK_C0_NC as usize).div_ceil(BLOCK_CH as usize);
         let cfg = CudaLaunchConfig {
-            grid:  [(B * num_c_tiles) as u32, 1, 1],
+            grid: [(B * num_c_tiles) as u32, 1, 1],
             block: [BLOCK_CH as u32, 1, 1],
             cluster: [1, 1, 1],
         };
 
-        device.launch(&program, &cfg, (
-            dy_buf.as_device_ptr() as *mut f32,
-            dx0_buf.as_device_ptr() as *mut f32,
-            CHUNK_C0_NC, C_TOTAL_NC, 0i32,
-        ))?;
-        device.launch(&program, &cfg, (
-            dy_buf.as_device_ptr() as *mut f32,
-            dx1_buf.as_device_ptr() as *mut f32,
-            CHUNK_C1_NC, C_TOTAL_NC, CHUNK_C0_NC,
-        ))?;
+        device.launch(
+            &program,
+            &cfg,
+            (
+                dy_buf.as_device_ptr(),
+                dx0_buf.as_device_ptr(),
+                CHUNK_C0_NC,
+                C_TOTAL_NC,
+                0i32,
+            ),
+        )?;
+        device.launch(
+            &program,
+            &cfg,
+            (
+                dy_buf.as_device_ptr(),
+                dx1_buf.as_device_ptr(),
+                CHUNK_C1_NC,
+                C_TOTAL_NC,
+                CHUNK_C0_NC,
+            ),
+        )?;
 
         let mut dx0 = vec![0.0f32; B * C0 * H * W];
         let mut dx1 = vec![0.0f32; B * C1 * H * W];
@@ -190,12 +221,18 @@ mod cuda {
         dx1_buf.to_host(&mut dx1)?;
 
         for i in 0..dx0.len() {
-            assert_eq!(dx0[i], exp_dx0[i],
-                "concat bwd dx0 mismatch at {i}: got={} expected={}", dx0[i], exp_dx0[i]);
+            assert_eq!(
+                dx0[i], exp_dx0[i],
+                "concat bwd dx0 mismatch at {i}: got={} expected={}",
+                dx0[i], exp_dx0[i]
+            );
         }
         for i in 0..dx1.len() {
-            assert_eq!(dx1[i], exp_dx1[i],
-                "concat bwd dx1 mismatch at {i}: got={} expected={}", dx1[i], exp_dx1[i]);
+            assert_eq!(
+                dx1[i], exp_dx1[i],
+                "concat bwd dx1 mismatch at {i}: got={} expected={}",
+                dx1[i], exp_dx1[i]
+            );
         }
         Ok(())
     }
@@ -219,33 +256,46 @@ mod cuda {
         let y_buf = device.buffer::<f32>(B * C_UP * OH * OW)?;
         x_buf.to_device(&xu)?;
 
-        let kernel = teeny_kernels::nn::tensor::upsample_nearest2d::UpsampleNearest2dForward::<f32>::new(
-            SCALE, SCALE, BLOCK_OW,
-        );
+        let kernel =
+            teeny_kernels::nn::tensor::upsample_nearest2d::UpsampleNearest2dForward::<f32>::new(
+                SCALE, SCALE, BLOCK_OW,
+            );
         let target = Target::new(env.capability);
-        let ptx = std::fs::read(compile_kernel(&kernel, &target, true)?)?;
+        let ptx = std::fs::read(compile_kernel(&kernel, &target, true, false)?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::upsample_nearest2d::UpsampleNearest2dForward<f32>,
         >(&ptx)?;
 
         let num_ow_tiles = OW.div_ceil(BLOCK_OW as usize);
         let cfg = CudaLaunchConfig {
-            grid:  [(B * C_UP * OH * num_ow_tiles) as u32, 1, 1],
+            grid: [(B * C_UP * OH * num_ow_tiles) as u32, 1, 1],
             block: [128, 1, 1],
             cluster: [1, 1, 1],
         };
-        device.launch(&program, &cfg, (
-            x_buf.as_device_ptr() as *mut f32,
-            y_buf.as_device_ptr() as *mut f32,
-            B as i32, C_UP as i32, H as i32, W as i32, OH as i32, OW as i32,
-        ))?;
+        device.launch(
+            &program,
+            &cfg,
+            (
+                x_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
+                B as i32,
+                C_UP as i32,
+                H as i32,
+                W as i32,
+                OH as i32,
+                OW as i32,
+            ),
+        )?;
 
         let mut y = vec![0.0f32; B * C_UP * OH * OW];
         y_buf.to_host(&mut y)?;
 
         for i in 0..y.len() {
-            assert_eq!(y[i], expected[i],
-                "upsample fwd mismatch at {i}: got={} expected={}", y[i], expected[i]);
+            assert_eq!(
+                y[i], expected[i],
+                "upsample fwd mismatch at {i}: got={} expected={}",
+                y[i], expected[i]
+            );
         }
         Ok(())
     }
@@ -269,26 +319,36 @@ mod cuda {
         let dx_buf = device.buffer::<f32>(B * C_UP * H * W)?;
         dy_buf.to_device(&dyu)?;
 
-        let kernel = teeny_kernels::nn::tensor::upsample_nearest2d::UpsampleNearest2dBackward::<f32>::new(
-            SCALE, SCALE, BLOCK_OW,
-        );
+        let kernel =
+            teeny_kernels::nn::tensor::upsample_nearest2d::UpsampleNearest2dBackward::<f32>::new(
+                SCALE, SCALE, BLOCK_OW,
+            );
         let target = Target::new(env.capability);
-        let ptx = std::fs::read(compile_kernel(&kernel, &target, true)?)?;
+        let ptx = std::fs::read(compile_kernel(&kernel, &target, true, false)?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::tensor::upsample_nearest2d::UpsampleNearest2dBackward<f32>,
         >(&ptx)?;
 
         let num_iw_tiles = W.div_ceil(BLOCK_OW as usize);
         let cfg = CudaLaunchConfig {
-            grid:  [(B * C_UP * H * num_iw_tiles) as u32, 1, 1],
+            grid: [(B * C_UP * H * num_iw_tiles) as u32, 1, 1],
             block: [128, 1, 1],
             cluster: [1, 1, 1],
         };
-        device.launch(&program, &cfg, (
-            dy_buf.as_device_ptr() as *mut f32,
-            dx_buf.as_device_ptr() as *mut f32,
-            B as i32, C_UP as i32, H as i32, W as i32, OH as i32, OW as i32,
-        ))?;
+        device.launch(
+            &program,
+            &cfg,
+            (
+                dy_buf.as_device_ptr(),
+                dx_buf.as_device_ptr(),
+                B as i32,
+                C_UP as i32,
+                H as i32,
+                W as i32,
+                OH as i32,
+                OW as i32,
+            ),
+        )?;
 
         let mut dx = vec![0.0f32; B * C_UP * H * W];
         dx_buf.to_host(&mut dx)?;
@@ -296,7 +356,9 @@ mod cuda {
         for i in 0..dx.len() {
             assert!(
                 (dx[i] - expected[i]).abs() < 1e-5,
-                "upsample bwd mismatch at {i}: got={} expected={}", dx[i], expected[i]
+                "upsample bwd mismatch at {i}: got={} expected={}",
+                dx[i],
+                expected[i]
             );
         }
         Ok(())

@@ -23,6 +23,29 @@
         </div>
       </header>
 
+      <!-- Inference time per image (only when the server runs a model) -->
+      <section
+        v-if="inference"
+        class="mb-6 rounded-2xl border border-white/10 bg-white/[0.04] p-4"
+      >
+        <div class="flex items-baseline justify-between">
+          <h2 class="text-sm font-medium uppercase tracking-wide text-slate-400">
+            Inference time per image
+          </h2>
+          <span class="text-xs text-slate-500">
+            {{ inference.count }} image{{ inference.count === 1 ? "" : "s" }} since server start
+          </span>
+        </div>
+        <div class="mt-3 grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
+          <div v-for="stat in inferenceStats" :key="stat.label">
+            <p class="text-xs font-medium uppercase tracking-wide text-slate-400">{{ stat.label }}</p>
+            <p class="mt-1 text-2xl font-semibold tabular-nums text-white">
+              {{ formatMs(stat.value) }}
+            </p>
+          </div>
+        </div>
+      </section>
+
       <p v-if="lotOrder.length === 0" class="text-sm text-slate-500">
         Waiting for data from server…
       </p>
@@ -87,6 +110,23 @@
           const lots = ref({});
           const lotOrder = ref([]);
           const socketStatus = ref("connecting");
+          const inference = ref(null);
+
+          const inferenceStats = computed(() => {
+            const s = inference.value;
+            if (!s) return [];
+            return [
+              { label: "Last", value: s.last_ms },
+              { label: "Mean", value: s.mean_ms },
+              { label: "Std dev", value: s.std_ms },
+              { label: "Max", value: s.max_ms },
+            ];
+          });
+
+          // Milliseconds below a second, seconds above (RISC-V runs ~2 s per image).
+          function formatMs(ms) {
+            return ms < 1000 ? `${ms.toFixed(1)} ms` : `${(ms / 1000).toFixed(2)} s`;
+          }
 
           const statusDot = computed(() => {
             if (socketStatus.value === "connected")
@@ -136,6 +176,7 @@
               lotOrder.value = [...lotOrder.value, snapshot.lot];
             }
             lots.value = { ...lots.value, [snapshot.lot]: snapshot };
+            if (snapshot.inference) inference.value = snapshot.inference;
             nextTick(() => drawLot(snapshot));
           }
 
@@ -167,7 +208,7 @@
 
           connect();
 
-          return { lots, lotOrder, statusDot, statusText };
+          return { lots, lotOrder, statusDot, statusText, inference, inferenceStats, formatMs };
         },
       }).mount("#app");
     </script>

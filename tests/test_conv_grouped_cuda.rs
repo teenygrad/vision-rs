@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Grouped and depthwise Conv2dForward CUDA integration tests.
 //
 // Two variants, both with BATCH=2, H=4, W=4, KH=KW=3, stride=1, pad=1:
@@ -35,16 +34,17 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{device::CudaLaunchConfig, errors::Result, testing};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
+    use teeny_cuda::{device::CudaLaunchConfig, errors::Result};
+    use teeny_test::cuda as testing;
 
     const BATCH: usize = 2;
-    const H:     usize = 4;
-    const W:     usize = 4;
+    const H: usize = 4;
+    const W: usize = 4;
 
     const BLOCK_OW: i32 = 4;
-    const TOL:      f32 = 1e-5;
+    const TOL: f32 = 1e-5;
 
     fn load(subdir: &str, name: &str) -> Vec<f32> {
         let path = format!(
@@ -53,64 +53,74 @@ mod cuda {
             subdir,
             name
         );
-        let bytes = std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
 
     #[allow(clippy::too_many_arguments)]
     fn run_grouped_conv(
-        device:   &teeny_cuda::device::CudaDevice,
-        target:   &Target,
-        x_host:   &[f32],
-        w_host:   &[f32],
+        device: &teeny_cuda::device::CudaDevice,
+        target: &Target,
+        x_host: &[f32],
+        w_host: &[f32],
         expected: &[f32],
-        batch:    usize,
-        c_in:     usize,
-        c_out:    usize,
-        h:        usize,
-        w:        usize,
-        g:        i32,
+        batch: usize,
+        c_in: usize,
+        c_out: usize,
+        h: usize,
+        w: usize,
+        g: i32,
     ) -> Result<()> {
         // Compile the grouped conv kernel (G baked in as const generic).
         let kernel = teeny_kernels::nn::conv::conv2d::Conv2dForward::<f32>::new(
             3, 3, 1, 1, 1, 1, g, BLOCK_OW,
         );
-        let ptx  = std::fs::read(compile_kernel(&kernel, target, true)?)?;
+        let ptx = std::fs::read(compile_kernel(&kernel, target, true, false)?)?;
         let prog = testing::load_program_from_ptx::<
             teeny_kernels::nn::conv::conv2d::Conv2dForward<f32>,
         >(&ptx)?;
 
-        let n_x   = batch * c_in  * h * w;
-        let n_w   = c_out * (c_in / g as usize) * 9;
+        let n_x = batch * c_in * h * w;
+        let n_w = c_out * (c_in / g as usize) * 9;
         let n_out = batch * c_out * h * w;
 
-        assert_eq!(x_host.len(),   n_x,  "x size mismatch");
-        assert_eq!(w_host.len(),   n_w,  "weight size mismatch");
+        assert_eq!(x_host.len(), n_x, "x size mismatch");
+        assert_eq!(w_host.len(), n_w, "weight size mismatch");
         assert_eq!(expected.len(), n_out, "expected size mismatch");
 
         let mut x_buf = device.buffer::<f32>(n_x)?;
         let mut w_buf = device.buffer::<f32>(n_w)?;
-        let y_buf     = device.buffer::<f32>(n_out)?;
+        let y_buf = device.buffer::<f32>(n_out)?;
 
         x_buf.to_device(x_host)?;
         w_buf.to_device(w_host)?;
 
         let ow_tiles = w.div_ceil(BLOCK_OW as usize);
-        device.launch(&prog, &CudaLaunchConfig {
-            grid:    [(batch * c_out * h * ow_tiles) as u32, 1, 1],
-            block:   [128, 1, 1],
-            cluster: [1, 1, 1],
-        }, (
-            x_buf.as_device_ptr() as *mut f32,
-            w_buf.as_device_ptr() as *mut f32,
-            y_buf.as_device_ptr() as *mut f32,
-            batch as i32, c_in as i32, c_out as i32,
-            h as i32, w as i32, h as i32, w as i32,
-        ))?;
+        device.launch(
+            &prog,
+            &CudaLaunchConfig {
+                grid: [(batch * c_out * h * ow_tiles) as u32, 1, 1],
+                block: [128, 1, 1],
+                cluster: [1, 1, 1],
+            },
+            (
+                x_buf.as_device_ptr(),
+                w_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
+                batch as i32,
+                c_in as i32,
+                c_out as i32,
+                h as i32,
+                w as i32,
+                h as i32,
+                w as i32,
+            ),
+        )?;
 
         let mut y_host = vec![0.0f32; n_out];
         y_buf.to_host(&mut y_host)?;
@@ -120,7 +130,8 @@ mod cuda {
                 (y_host[i] - expected[i]).abs() < TOL,
                 "grouped conv g={g} mismatch at element {i}: \
                  got={} expected={}",
-                y_host[i], expected[i],
+                y_host[i],
+                expected[i],
             );
         }
         Ok(())
@@ -139,8 +150,12 @@ mod cuda {
             &load("depthwise", "x.bin"),
             &load("depthwise", "conv_w.bin"),
             &load("depthwise", "expected_output.bin"),
-            BATCH, 128, 128, H, W,
-            128,   // G = C_IN = C_OUT  (pure depthwise)
+            BATCH,
+            128,
+            128,
+            H,
+            W,
+            128, // G = C_IN = C_OUT  (pure depthwise)
         )
     }
 
@@ -157,8 +172,12 @@ mod cuda {
             &load("g4", "x.bin"),
             &load("g4", "conv_w.bin"),
             &load("g4", "expected_output.bin"),
-            BATCH, 8, 8, H, W,
-            4,     // G=4, c_in_per_group=2
+            BATCH,
+            8,
+            8,
+            H,
+            W,
+            4, // G=4, c_in_per_group=2
         )
     }
 }

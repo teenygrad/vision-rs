@@ -31,6 +31,10 @@ default-target = "aarch64-unknown-linux-gnu"
 # paths; the rest of the workspace (Cargo.toml root) stays visible via the
 # parent mount.
 
+# RISC-V boards (`cargo teeny build --target riscv-rvv|spacemit-k3`) build for
+# `riscv64gc-unknown-linux-gnu` with cross's stock image -- no CUDA, so no custom
+# Dockerfile or extra mounts are needed.
+
 [target.aarch64-unknown-linux-gnu.dockerfile]
 file = "./docker/Dockerfile.jetson-orin-nano"
 context = "."

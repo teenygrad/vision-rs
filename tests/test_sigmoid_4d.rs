@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-
 #[cfg(feature = "cuda")]
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{driver::cuda::compile_kernel, target::cuda::Target};
     use teeny_core::device::{Device, buffer::Buffer};
-    use teeny_cuda::{errors::Result, testing};
+    use teeny_cuda::compiler::{compile_kernel, target::Target};
+    use teeny_cuda::errors::Result;
+    use teeny_test::cuda as testing;
 
     // Shape: (N=2, C=8, H=16, W=16) stored as a flat contiguous f32 buffer.
     const N: usize = 2 * 8 * 16 * 16; // 4096
@@ -35,7 +35,9 @@ mod cuda {
         );
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("missing fixture {path}: {e}"));
         bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
             .collect()
     }
@@ -55,18 +57,19 @@ mod cuda {
         x_buf.to_device(&x_host)?;
 
         let kernel = teeny_kernels::nn::activation::sigmoid::SigmoidForward::<f32>::new(BLOCK_SIZE);
-        let ptx = std::fs::read(compile_kernel(&kernel, &Target::new(env.capability), true)?)?;
+        let ptx = std::fs::read(compile_kernel(
+            &kernel,
+            &Target::new(env.capability),
+            true,
+            false,
+        )?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::sigmoid::SigmoidForward<f32>,
         >(&ptx)?;
         env.device.launch(
             &program,
             &testing::launch_config(N, BLOCK_SIZE),
-            (
-                x_buf.as_device_ptr() as *mut f32,
-                y_buf.as_device_ptr() as *mut f32,
-                N as i32,
-            ),
+            (x_buf.as_device_ptr(), y_buf.as_device_ptr(), N as i32),
         )?;
         y_buf.to_host(&mut y_host)?;
 
@@ -99,8 +102,14 @@ mod cuda {
         dy_buf.to_device(&dy_host)?;
         y_buf.to_device(&y_host)?;
 
-        let kernel = teeny_kernels::nn::activation::sigmoid::SigmoidBackward::<f32>::new(BLOCK_SIZE);
-        let ptx = std::fs::read(compile_kernel(&kernel, &Target::new(env.capability), true)?)?;
+        let kernel =
+            teeny_kernels::nn::activation::sigmoid::SigmoidBackward::<f32>::new(BLOCK_SIZE);
+        let ptx = std::fs::read(compile_kernel(
+            &kernel,
+            &Target::new(env.capability),
+            true,
+            false,
+        )?)?;
         let program = testing::load_program_from_ptx::<
             teeny_kernels::nn::activation::sigmoid::SigmoidBackward<f32>,
         >(&ptx)?;
@@ -108,9 +117,9 @@ mod cuda {
             &program,
             &testing::launch_config(N, BLOCK_SIZE),
             (
-                dy_buf.as_device_ptr() as *mut f32,
-                y_buf.as_device_ptr() as *mut f32,
-                dx_buf.as_device_ptr() as *mut f32,
+                dy_buf.as_device_ptr(),
+                y_buf.as_device_ptr(),
+                dx_buf.as_device_ptr(),
                 N as i32,
             ),
         )?;

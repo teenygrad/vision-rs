@@ -51,9 +51,10 @@ Compiled artifacts land in `target/aarch64-unknown-linux-gnu/release/`.
 
 `cargo teeny build` wraps `cross build` and automatically:
 
-- Resolves the [teenygrad](https://github.com/teenygrad/teenygrad) workspace
-  root from `Cargo.toml`'s `[patch.crates-io]` entries and mounts it into
-  the cross container — required because `cross` only auto-mounts
+- If `Cargo.toml` has `[patch.crates-io]` entries pointing at a local
+  [teenygrad](https://github.com/teenygrad/teenygrad) checkout (only when
+  developing against unreleased teenygrad), resolves that workspace root and
+  mounts it into the cross container, because `cross` only auto-mounts
   individual crate directories, not the workspace root providing
   `Cargo.toml` inheritance.
 - Mounts the host CUDA aarch64 target directory at the path the cross
@@ -61,6 +62,20 @@ Compiled artifacts land in `target/aarch64-unknown-linux-gnu/release/`.
 - Uses the custom image defined in `docker/Dockerfile.jetson-orin-nano`,
   which extends the `cross` base image with `clang-12` (required by
   `bindgen` for aarch64 cross-bindings).
+
+## RISC-V RVV
+
+RISC-V boards (`riscv-rvv`, `spacemit-k3`) cross-compile to `riscv64gc-unknown-linux-gnu` with
+`cross`'s stock image, with no CUDA mount or custom Dockerfile. Turn off the default `cuda` feature:
+
+```bash
+cargo teeny build --target riscv-rvv --example yolo26 --no-default-features --features riscv,training
+# run the result locally under qemu-riscv64
+cargo teeny run --target riscv-rvv --example yolo26 --no-default-features --features riscv,training -- --help
+```
+
+Only ahead-of-time kernel compilation targets RVV. Inference still needs `cuda`, because
+teenygrad has no RISC-V model runtime yet.
 
 Once you have a cross-compiled binary, see
 [Packaging a Deployable Bundle](./packaging.md) to combine it with

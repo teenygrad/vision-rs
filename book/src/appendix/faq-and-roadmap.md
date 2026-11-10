@@ -40,10 +40,9 @@ ahead-of-time when packaging for deployment.
 
 ### Can I install this from crates.io yet?
 
-Not yet published — vision-rs depends on several `teeny-*` crates from
-[teenygrad](https://github.com/teenygrad/teenygrad) that aren't live on
-crates.io yet either. Once they are, `[patch.crates-io]` in `Cargo.toml`
-comes out and vision-rs publishes normally.
+Yes: `cargo add vision-rs`. Its `teeny-*` dependencies from
+[teenygrad](https://github.com/teenygrad/teenygrad) come from crates.io too,
+so no teenygrad checkout is needed.
 
 ### I'm interested in contributing — how do I get started?
 

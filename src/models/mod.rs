@@ -14,6 +14,5 @@
  * limitations under the License.
  */
 
-
 /// The YOLO26 object detection model family.
 pub mod yolo;

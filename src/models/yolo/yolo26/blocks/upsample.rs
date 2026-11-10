@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 use teeny_core::graph::{Op, SymTensor};
 
 /// Nearest-neighbour 2-D upsample.
@@ -29,7 +28,15 @@ pub fn upsample(scale_h: usize, scale_w: usize) -> impl Fn(SymTensor) -> SymTens
             x.shape[2].map(|h| h * scale_h),
             x.shape[3].map(|w| w * scale_w),
         ];
-        let node_id = x.graph.borrow_mut().add_node(op, vec![x.node_id], x.dtype, shape.clone());
-        SymTensor { node_id, graph: x.graph.clone(), dtype: x.dtype, shape }
+        let node_id = x
+            .graph
+            .borrow_mut()
+            .add_node(op, vec![x.node_id], x.dtype, shape.clone());
+        SymTensor {
+            node_id,
+            graph: x.graph.clone(),
+            dtype: x.dtype,
+            shape,
+        }
     }
 }

@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // Full backward-pass integration test for a YOLO26n-equivalent model.
 //
 // Pipeline under test:
@@ -41,13 +40,17 @@
 mod cuda {
     use dotenv::dotenv;
     use serial_test::serial;
-    use teeny_compiler::compiler::{backend::llvm::compiler::LlvmCompiler, target::cuda::Target};
+    use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
     use teeny_core::{
         graph::{DtypeRepr, SymTensor},
         model::LoweringMode,
     };
-    use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
+    use teeny_cuda::{
+        compiler::{graph::CudaGraphCompiler, target::Target},
+        model::TensorRef,
+    };
     use teeny_kernels::graph::TritonLowering;
+    use teeny_test::cuda as testing;
     use vision_rs::models::yolo::{
         loss::yolo26::Yolo26Loss,
         yolo26::blocks::{

@@ -26,13 +26,21 @@
 //!   cargo run --example yolo26 -- verify   --model ultralytics/yolo26n \
 //!       --dataset assets/datasets/coco128.toml
 
+// Without `cuda`, the train/eval/bench/verify subcommands compile to stubs that report CUDA is
+// required, so the helpers only they use (dataset loading, preprocessing, parameter init, mAP
+// matching) go unused. Allow that rather than gating each helper behind its own cfg.
+#![cfg_attr(
+    not(feature = "cuda"),
+    allow(dead_code, unused_variables, unreachable_code)
+)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 type InferFn = Box<dyn FnMut(&Path) -> anyhow::Result<Vec<(usize, f32, [f32; 4])>>>;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use dotenv::dotenv;
 use eframe::egui;
 use futures_util::StreamExt;
@@ -69,11 +77,6 @@ enum Cmd {
         /// Input resolution for inference (square)
         #[arg(long, default_value_t = 640)]
         img_size: usize,
-        /// Target device's SM count, for shape-adaptive conv kernel tile-size selection
-        /// (see teenygrad's Options::sm_count). Safe to auto-detect here (unlike the AOT
-        /// path) since this compiles for whatever GPU is actually attached at run time.
-        #[arg(long)]
-        sm_count: Option<u32>,
     },
     /// Verify inference against a pre-trained model on a dataset's validation split
     Verify {
@@ -155,11 +158,6 @@ enum Cmd {
         /// Skip graph.optimise() (run unoptimised for comparison)
         #[arg(long)]
         no_optimise: bool,
-        /// Target device's SM count, for shape-adaptive conv kernel tile-size selection
-        /// (see teenygrad's Options::sm_count). Safe to auto-detect here (unlike the AOT
-        /// path) since this compiles for whatever GPU is actually attached at run time.
-        #[arg(long)]
-        sm_count: Option<u32>,
     },
     /// Full COCO val2017 evaluation — reads images and annotations directly
     /// from the raw dataset; computes per-class AP@0.5 and AP@0.5:0.95.
@@ -182,6 +180,8 @@ enum Cmd {
         /// Batch size for inference
         #[arg(short = 'b', long, default_value_t = 10)]
         batch_size: usize,
+        #[command(flatten)]
+        opts: ValidateOpts,
     },
     /// Throughput/latency benchmark across batch sizes.
     /// Compare against ../vision-rs-utils/bench.py (ultralytics reference).
@@ -204,11 +204,10 @@ enum Cmd {
         /// Skip mAP accuracy check (faster)
         #[arg(long)]
         skip_map: bool,
-        /// Target device's SM count, for shape-adaptive conv kernel tile-size selection
-        /// (see teenygrad's Options::sm_count). Safe to auto-detect here (unlike the AOT
-        /// path) since this compiles for whatever GPU is actually attached at run time.
+        /// Skip Anduin graph optimisation (Conv2d+BN+SiLU fusion) — compile the raw graph
+        /// as-is, for comparison against the optimised path.
         #[arg(long)]
-        sm_count: Option<u32>,
+        no_optimise: bool,
     },
 }
 
@@ -321,12 +320,43 @@ struct CocoCategory {
     name: String,
 }
 
+/// Which executor `validate` runs the model on.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ValidateRuntime {
+    /// Anduin-optimised graph replayed as a CUDA graph (CUDA only; the fast path).
+    CudaGraph,
+    /// Unoptimised graph launched kernel-by-kernel through teeny-runtime, on whichever backend
+    /// this binary was built for: `--features cuda`, or `--no-default-features --features qemu`
+    /// for RISC-V under qemu-riscv64. Use this to compare backends like for like.
+    Runtime,
+}
+
+#[derive(clap::Args)]
+struct ValidateOpts {
+    /// Executor to run the model on
+    #[arg(long, value_enum, default_value_t = ValidateRuntime::CudaGraph)]
+    runtime: ValidateRuntime,
+    /// Evaluate only the first N images (in filename order)
+    #[arg(long)]
+    limit: Option<usize>,
+    /// Write each image's raw model outputs (`<stem>.boxes.f32` / `<stem>.scores.f32`,
+    /// little-endian f32) to this directory, for an element-wise cross-backend diff
+    #[arg(long)]
+    dump_outputs: Option<PathBuf>,
+    /// Print per-node launch timings (`--runtime runtime` only)
+    #[arg(long)]
+    trace: bool,
+}
+
+/// Runs one batch of preprocessed pixels through the model, returning `[boxes, scores]`.
+type BatchInferFn = Box<dyn FnMut(&[f32]) -> Result<Vec<Vec<f32>>>>;
+
 // ---------------------------------------------------------------------------
 // AOT kernel compile — driven by `cargo teeny aot`
 // ---------------------------------------------------------------------------
 //
 // `cargo teeny aot --example yolo26 --device cuda --options "capability=sm_90,..."`
-// (see cargo-teeny) builds this example for the host and runs it with
+// (or `--features riscv --device riscv --options "capability=generic-rvv1.0"`; see cargo-teeny) builds this example for the host and runs it with
 // --device/--options/--cache-dir/--force forwarded verbatim — no subcommand
 // keyword. We detect that shape *before* the normal `Args::parse()` (which
 // requires a subcommand) so it doesn't collide with `download`/`view`/`bench`/etc.
@@ -334,12 +364,12 @@ struct CocoCategory {
 // default deployment model (YOLO26n, 640×640, nc=80/COCO) ahead of time and
 // exit, without touching the normal subcommand dispatch below.
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn is_aot_invocation(raw_args: &[String]) -> bool {
     raw_args.iter().any(|a| a == "--device")
 }
 
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn run_aot(raw_args: &[String]) -> Result<()> {
     use teeny_core::graph::DtypeRepr;
     use teeny_core::model::LoweringMode;
@@ -359,15 +389,8 @@ fn run_aot(raw_args: &[String]) -> Result<()> {
 
     let cli = AotCli::parse_from(raw_args);
 
-    // Parsed again inside aot_compile below for its own purposes (gpu_name, ptx_version) —
-    // duplicated here only because TritonLowering needs sm_count *before* being constructed,
-    // and aot_compile doesn't hand back the Options it parses internally.
-    let options = teeny_cuda::compiler::options::Options::parse(
-        cli.aot.options.as_deref().unwrap_or(""),
-    )?;
-
     let model = yolo26::<f32>(NC, &Yolo26Variant::N, DetectHead::OneToOne);
-    let lowering = TritonLowering::new().with_sm_count(options.sm_count);
+    let lowering = TritonLowering::new();
 
     teeny_cli::aot_compile(
         &model,
@@ -394,13 +417,13 @@ fn main() -> Result<()> {
     dotenv().ok();
 
     let raw_args: Vec<String> = std::env::args().collect();
-    #[cfg(feature = "cuda")]
+    #[cfg(any(feature = "cuda", feature = "riscv"))]
     if is_aot_invocation(&raw_args) {
         return run_aot(&raw_args);
     }
-    #[cfg(not(feature = "cuda"))]
+    #[cfg(not(any(feature = "cuda", feature = "riscv")))]
     if raw_args.iter().any(|a| a == "--device") {
-        anyhow::bail!("--device (AOT compile) requires the 'cuda' feature");
+        anyhow::bail!("--device (AOT compile) requires the 'cuda' or 'riscv' feature");
     }
 
     let args = Args::parse();
@@ -414,8 +437,7 @@ fn main() -> Result<()> {
             dataset,
             model,
             img_size,
-            sm_count,
-        } => run_view(dataset, model, img_size, sm_count),
+        } => run_view(dataset, model, img_size),
         Cmd::Verify {
             model,
             dataset,
@@ -447,15 +469,15 @@ fn main() -> Result<()> {
             img_size,
             image_idx,
             no_optimise,
-            sm_count,
-        } => run_debug_infer(model, dataset, img_size, image_idx, no_optimise, sm_count),
+        } => run_debug_infer(model, dataset, img_size, image_idx, no_optimise),
         Cmd::Validate {
             model,
             images,
             annotations,
             img_size,
             batch_size,
-        } => run_validate(model, images, annotations, img_size, batch_size),
+            opts,
+        } => run_validate(model, images, annotations, img_size, batch_size, opts),
         Cmd::Bench {
             model,
             dataset,
@@ -463,8 +485,16 @@ fn main() -> Result<()> {
             warmup,
             runs,
             skip_map,
-            sm_count,
-        } => run_bench(model, dataset, img_size, warmup, runs, skip_map, sm_count),
+            no_optimise,
+        } => run_bench(
+            model,
+            dataset,
+            img_size,
+            warmup,
+            runs,
+            skip_map,
+            no_optimise,
+        ),
     }
 }
 
@@ -503,12 +533,7 @@ async fn run_download(dataset: PathBuf) -> Result<()> {
 // View command
 // ---------------------------------------------------------------------------
 
-fn run_view(
-    dataset: PathBuf,
-    model_spec: Option<String>,
-    img_size: usize,
-    sm_count: Option<u32>,
-) -> Result<()> {
+fn run_view(dataset: PathBuf, model_spec: Option<String>, img_size: usize) -> Result<()> {
     let config_text = std::fs::read_to_string(&dataset)
         .with_context(|| format!("reading dataset config {:?}", dataset))?;
     let config: DatasetConfig =
@@ -532,12 +557,11 @@ fn run_view(
 
     #[cfg(feature = "cuda")]
     let infer_fn: Option<InferFn> = match model_spec {
-        Some(ref spec) => Some(build_view_infer_fn(spec, img_size, sm_count)?),
+        Some(ref spec) => Some(build_view_infer_fn(spec, img_size)?),
         None => None,
     };
     #[cfg(not(feature = "cuda"))]
     let infer_fn: Option<InferFn> = {
-        let _ = sm_count;
         if model_spec.is_some() {
             eprintln!("Warning: --model requires the 'cuda' feature; inference overlay disabled.");
         }
@@ -691,10 +715,11 @@ impl eframe::App for ViewApp {
                 ui.label("Go to:");
                 let resp =
                     ui.add(egui::TextEdit::singleline(&mut self.jump_buf).desired_width(56.0));
-                if resp.lost_focus() && ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if let Ok(n) = self.jump_buf.trim().parse::<usize>() {
-                        self.jump(n);
-                    }
+                if resp.lost_focus()
+                    && ctx.input(|i| i.key_pressed(egui::Key::Enter))
+                    && let Ok(n) = self.jump_buf.trim().parse::<usize>()
+                {
+                    self.jump(n);
                 }
 
                 ui.separator();
@@ -736,7 +761,7 @@ impl eframe::App for ViewApp {
                     painter.rect_stroke(
                         det_rect,
                         0.0,
-                        egui::Stroke::new(3.5, egui::Color32::BLACK),
+                        egui::Stroke::new(3.5_f32, egui::Color32::BLACK),
                     );
 
                     let label = self.classes.get(cls_id).map(|s| s.as_str()).unwrap_or("?");
@@ -765,28 +790,10 @@ impl eframe::App for ViewApp {
 }
 
 // ---------------------------------------------------------------------------
-// Color palette — golden-angle hue step, full saturation / value
-// ---------------------------------------------------------------------------
-
-fn class_color(class_id: usize) -> egui::Color32 {
-    let hue = (class_id as f32 * 137.508) % 360.0;
-    let h = hue / 60.0;
-    let x = 1.0 - (h % 2.0 - 1.0).abs();
-    let (r, g, b) = match h as u32 {
-        0 => (1.0_f32, x, 0.0),
-        1 => (x, 1.0, 0.0),
-        2 => (0.0, 1.0, x),
-        3 => (0.0, x, 1.0),
-        4 => (x, 0.0, 1.0),
-        _ => (1.0, 0.0, x),
-    };
-    egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
-}
-
-// ---------------------------------------------------------------------------
 // Training
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)] // mirrors the `train` subcommand's flags one to one
 fn run_train(
     dataset: PathBuf,
     img_size: usize,
@@ -813,20 +820,17 @@ fn run_train(
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, driver::cuda::compile_kernel,
-            target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
         use teeny_cuda::{
-            compiler::graph::CudaGraphCompiler,
+            compiler::{compile_kernel, graph::CudaGraphCompiler, target::Target},
             model::{AdamwKernel, TensorRef},
-            testing,
         };
         use teeny_kernels::{graph::TritonLowering, nn::optim::adam::AdamwStep};
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
             yolo26::{Yolo26Variant, yolo26_dual},
@@ -957,7 +961,9 @@ fn run_train(
             );
             let bytes = std::fs::read(ckpt_params.as_ref().unwrap())?;
             let saved: Vec<f32> = bytes
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
                 .collect();
             let mut cursor = 0usize;
@@ -989,7 +995,8 @@ fn run_train(
 
         // ── 6. Compile AdamW kernel ───────────────────────────────────────────
 
-        let adamw_ptx = std::fs::read(compile_kernel(&AdamwStep::new(1024), &target, true)?)?;
+        let adamw_ptx =
+            std::fs::read(compile_kernel(&AdamwStep::new(1024), &target, true, false)?)?;
         let adamw = AdamwKernel::from_ptx(&adamw_ptx)?;
 
         // ── 7. Loss helper ────────────────────────────────────────────────────
@@ -1331,18 +1338,15 @@ fn save_checkpoint(
 /// coordinates (same format as GT annotations), ready to draw on top of the
 /// original (non-letterboxed) display image.
 #[cfg(feature = "cuda")]
-fn build_view_infer_fn(
-    model_spec: &str,
-    img_size: usize,
-    sm_count: Option<u32>,
-) -> Result<InferFn> {
-    use teeny_compiler::compiler::{backend::llvm::compiler::LlvmCompiler, target::cuda::Target};
+fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
+    use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
     use teeny_core::{
         graph::{DtypeRepr, SymTensor},
         model::LoweringMode,
     };
-    use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
-    use teeny_kernels::graph::TritonLowering;
+    use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
+    use teeny_kernels::graph::{Anduin, TritonLowering};
+    use teeny_test::cuda as testing;
     use vision_rs::models::yolo::{
         loss::anchor::AnchorGrid,
         yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26},
@@ -1396,11 +1400,11 @@ fn build_view_infer_fn(
     );
     let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
     let graph_rc = out.boxes.graph.clone();
-    let optimised = graph_rc.borrow().optimise();
+    let optimised = graph_rc.borrow().clone();
 
     let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
     let graph_cmp = CudaGraphCompiler::new(compiler);
-    let lowering = TritonLowering::new().with_sm_count(sm_count);
+    let lowering = TritonLowering::new().with_optimizer(Anduin);
     let cuda_model = graph_cmp.compile_model(
         &optimised,
         &lowering,
@@ -1630,15 +1634,14 @@ fn run_verify(
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
-        use teeny_kernels::graph::TritonLowering;
+        use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
+        use teeny_kernels::graph::{Anduin, TritonLowering};
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
         // ── 1. Parse model config ──────────────────────────────────────────────
@@ -1728,26 +1731,19 @@ fn run_verify(
 
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new();
-        let cuda_model = if optimise {
+        let lowering = if optimise {
             println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
-            let optimised = graph_rc.borrow().optimise();
-            graph_cmp.compile_model(
-                &optimised,
-                &lowering,
-                &target,
-                LoweringMode::Inference,
-                false,
-            )?
+            TritonLowering::new().with_optimizer(Anduin)
         } else {
-            graph_cmp.compile_model(
-                &graph_rc.borrow(),
-                &lowering,
-                &target,
-                LoweringMode::Inference,
-                false,
-            )?
+            TritonLowering::new()
         };
+        let cuda_model = graph_cmp.compile_model(
+            &graph_rc.borrow(),
+            &lowering,
+            &target,
+            LoweringMode::Inference,
+            false,
+        )?;
         println!("Compiled {} DAG nodes.", cuda_model.dag.len());
         println!();
 
@@ -1792,15 +1788,17 @@ fn run_debug_train(
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
+        use teeny_cuda::{
+            compiler::{graph::CudaGraphCompiler, target::Target},
+            model::TensorRef,
+        };
         use teeny_kernels::graph::TritonLowering;
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::{
             loss::yolo26::Yolo26Loss,
             yolo26::{Yolo26Variant, yolo26_dual},
@@ -2062,10 +2060,10 @@ fn run_debug_train(
         let mut global_sq_sum = 0.0f64;
 
         for (name, node_idx, param_idx) in &named {
-            if let Some(ref f) = param_filter {
-                if !name.contains(f.as_str()) {
-                    continue;
-                }
+            if let Some(ref f) = param_filter
+                && !name.contains(f.as_str())
+            {
+                continue;
             }
 
             let shape = shape_map
@@ -2123,24 +2121,25 @@ fn run_debug_infer(
     img_size: usize,
     image_idx: usize,
     no_optimise: bool,
-    sm_count: Option<u32>,
 ) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {
-        let _ = (model_spec, dataset, img_size, image_idx, no_optimise, sm_count);
+        let _ = (model_spec, dataset, img_size, image_idx, no_optimise);
         anyhow::bail!("debug-infer requires the 'cuda' feature");
     }
     #[cfg(feature = "cuda")]
     {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, model::TensorRef, testing};
-        use teeny_kernels::graph::TritonLowering;
+        use teeny_cuda::{
+            compiler::{graph::CudaGraphCompiler, target::Target},
+            model::TensorRef,
+        };
+        use teeny_kernels::graph::{Anduin, TritonLowering};
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
         // ── 1. Parse model config ──────────────────────────────────────────────
@@ -2221,18 +2220,18 @@ fn run_debug_infer(
         let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
         let graph_rc = out.boxes.graph.clone();
 
-        let graph_to_compile = if no_optimise {
+        let lowering = if no_optimise {
             println!(
                 "Compiling YOLO26{} (inference, NO optimise) ...",
                 variant_str.to_uppercase()
             );
-            graph_rc.borrow().clone()
+            TritonLowering::new()
         } else {
             println!(
                 "Compiling YOLO26{} (inference, with optimise) ...",
                 variant_str.to_uppercase()
             );
-            graph_rc.borrow().optimise()
+            TritonLowering::new().with_optimizer(Anduin)
         };
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
@@ -2240,9 +2239,8 @@ fn run_debug_infer(
 
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new().with_sm_count(sm_count);
         let cuda_model = graph_cmp.compile_model(
-            &graph_to_compile,
+            &graph_rc.borrow(),
             &lowering,
             &target,
             LoweringMode::Inference,
@@ -2372,29 +2370,10 @@ fn run_validate(
     annotations_path: PathBuf,
     img_size: usize,
     batch_size: usize,
+    opts: ValidateOpts,
 ) -> Result<()> {
-    #[cfg(not(feature = "cuda"))]
     {
-        let _ = (
-            model_spec,
-            images_dir,
-            annotations_path,
-            img_size,
-            batch_size,
-        );
-        anyhow::bail!("validate requires the 'cuda' feature");
-    }
-    #[cfg(feature = "cuda")]
-    {
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
-        use teeny_core::{
-            graph::{DtypeRepr, SymTensor},
-            model::LoweringMode,
-        };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
-        use teeny_kernels::graph::TritonLowering;
+        use teeny_core::graph::{DtypeRepr, SymTensor};
         use vision_rs::models::yolo::{
             loss::anchor::AnchorGrid,
             yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26},
@@ -2497,16 +2476,17 @@ fn run_validate(
             })
             .collect();
 
-        let n_images = val_files.len();
-        let n_anns: usize = gt_abs.iter().map(|v| v.len()).sum();
-        println!("Loaded {n_images} images, {n_anns} annotations");
+        let n_images = opts
+            .limit
+            .map_or(val_files.len(), |limit| limit.min(val_files.len()));
+        let n_anns: usize = gt_abs[..n_images].iter().map(|v| v.len()).sum();
+        println!(
+            "Loaded {} images, evaluating {n_images} ({n_anns} annotations)",
+            val_files.len()
+        );
         println!();
 
-        // ── 4. CUDA setup + compile model ──────────────────────────────────────
-
-        let env = testing::setup_cuda_env()?;
-        let target = Target::new(env.capability);
-        let device = &env.device;
+        // ── 4. Build graph + compile/load on the selected executor ────────────
 
         let variant: Yolo26Variant = match variant_str.to_lowercase().as_str() {
             "n" => Yolo26Variant::N,
@@ -2525,37 +2505,42 @@ fn run_validate(
         );
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
-        let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
-        let kern_cache = teeny_compiler::compiler::default_cache_dir();
-
         let (input_sym, _graph_rc) = SymTensor::input(
             DtypeRepr::F32,
             vec![None, Some(3), Some(img_size), Some(img_size)],
         );
         let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
-        let graph_rc = out.boxes.graph.clone();
-        let optimised = graph_rc.borrow().optimise();
+        let graph = out.boxes.graph.borrow().clone();
 
-        let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
-        let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new();
-        let cuda_model = graph_cmp.compile_model(
-            &optimised,
-            &lowering,
-            &target,
-            LoweringMode::Inference,
-            false,
-        )?;
-        println!("Compiled {} DAG nodes.", cuda_model.dag.len());
-
-        // ── 5. Load weights ────────────────────────────────────────────────────
-
-        let mut model = cuda_model.load(device, batch_size)?;
-        println!("Loading weights from {} ...", st_path.display());
-        load_weights_from_safetensors(&mut model, &st_path, &model_config.weights.mapping)?;
+        let mut infer: BatchInferFn = match opts.runtime {
+            ValidateRuntime::CudaGraph => {
+                #[cfg(feature = "cuda")]
+                {
+                    validate_cuda_graph_infer(
+                        &graph,
+                        img_size,
+                        batch_size,
+                        &st_path,
+                        &model_config,
+                    )?
+                }
+                #[cfg(not(feature = "cuda"))]
+                anyhow::bail!(
+                    "--runtime cuda-graph requires the 'cuda' feature; use --runtime runtime"
+                )
+            }
+            ValidateRuntime::Runtime => {
+                #[cfg(any(feature = "cuda", feature = "riscv"))]
+                {
+                    validate_runtime_infer(&graph, batch_size, &st_path, &model_config, opts.trace)?
+                }
+                #[cfg(not(any(feature = "cuda", feature = "riscv")))]
+                anyhow::bail!("--runtime runtime requires the 'cuda' or 'riscv' feature")
+            }
+        };
         println!();
 
-        // ── 6. Anchor grid + CUDA graph ────────────────────────────────────────
+        // ── 6. Anchor grid ──────────────────────────────────────────────────
 
         let grid = AnchorGrid::yolo26(img_size, img_size);
         let a = grid.n_anchors;
@@ -2589,20 +2574,6 @@ fn run_validate(
             .enumerate()
             .flat_map(|(si, &a_s)| (0..a_s).map(move |j| (si, j)))
             .collect();
-
-        let terminals = model.terminal_node_indices_sorted_by_size();
-        let (boxes_tidx, scores_tidx) = match terminals.len() {
-            2 => (terminals[0], terminals[1]),
-            4 => (terminals[1], terminals[3]),
-            n => anyhow::bail!("expected 2 or 4 terminal nodes, got {n}"),
-        };
-
-        let graph_model = model.capture_graph(
-            device,
-            batch_size,
-            &[vec![batch_size, 3, img_size, img_size]],
-            &[boxes_tidx, scores_tidx],
-        )?;
 
         // ── 7. Streaming inference + multi-threshold TP accumulation ───────────
         //
@@ -2651,17 +2622,34 @@ fn run_validate(
             // Pad last (short) batch with the last real image.
             let mut input_data = Vec::with_capacity(batch_size * 3 * img_size * img_size);
             for i in 0..batch_size {
-                let src = if i < n_real {
-                    &batch_pixels[i]
-                } else {
-                    &last_pixels
-                };
+                let src = batch_pixels.get(i).unwrap_or(&last_pixels);
                 input_data.extend_from_slice(src);
             }
 
-            let outputs = graph_model.run(&[input_data.as_slice()])?;
+            let outputs = infer(&input_data)?;
             let boxes_host = &outputs[0];
             let scores_host = &outputs[1];
+
+            if let Some(dir) = &opts.dump_outputs {
+                std::fs::create_dir_all(dir)?;
+                for bi in 0..n_real {
+                    let stem = Path::new(&val_files[batch_start + bi])
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("image")
+                        .to_string();
+                    for (kind, data, per_image) in [
+                        ("boxes", boxes_host, 4 * a),
+                        ("scores", scores_host, nc * a),
+                    ] {
+                        let bytes: Vec<u8> = data[bi * per_image..(bi + 1) * per_image]
+                            .iter()
+                            .flat_map(|v| v.to_le_bytes())
+                            .collect();
+                        std::fs::write(dir.join(format!("{stem}.{kind}.f32")), bytes)?;
+                    }
+                }
+            }
 
             for bi in 0..n_real {
                 let img_idx = batch_start + bi;
@@ -2878,13 +2866,121 @@ fn run_validate(
     }
 }
 
+/// Picks YOLO26's `(boxes, scores)` output nodes from its terminal nodes sorted by size.
+fn box_score_terminals(terminals: &[usize]) -> Result<(usize, usize)> {
+    match terminals.len() {
+        2 => Ok((terminals[0], terminals[1])),
+        4 => Ok((terminals[1], terminals[3])),
+        n => anyhow::bail!("expected 2 or 4 terminal nodes, got {n}"),
+    }
+}
+
+/// `--runtime cuda-graph`: Anduin-optimised graph, compiled by `CudaGraphCompiler` and replayed
+/// as a captured CUDA graph.
+#[cfg(feature = "cuda")]
+fn validate_cuda_graph_infer(
+    graph: &teeny_core::graph::Graph,
+    img_size: usize,
+    batch_size: usize,
+    st_path: &Path,
+    model_config: &ModelConfig,
+) -> Result<BatchInferFn> {
+    use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
+    use teeny_core::model::LoweringMode;
+    use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
+    use teeny_kernels::graph::{Anduin, TritonLowering};
+    use teeny_test::cuda as testing;
+
+    let env = testing::setup_cuda_env()?;
+    let target = Target::new(env.capability);
+
+    // teenyc (TEENYC_PATH, else the toolchain `cargo teeny install-toolchain` set up) is only
+    // looked up for kernels missing from the cache.
+    let kern_cache = teeny_compiler::compiler::default_cache_dir();
+    let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
+    let lowering = TritonLowering::new().with_optimizer(Anduin);
+    let cuda_model = CudaGraphCompiler::new(compiler).compile_model(
+        graph,
+        &lowering,
+        &target,
+        LoweringMode::Inference,
+        false,
+    )?;
+    println!("Compiled {} DAG nodes.", cuda_model.dag.len());
+
+    let mut model = cuda_model.load(&env.device, batch_size)?;
+    println!("Loading weights from {} ...", st_path.display());
+    load_weights_from_safetensors(&mut model, st_path, &model_config.weights.mapping)?;
+
+    let (boxes_tidx, scores_tidx) =
+        box_score_terminals(&model.terminal_node_indices_sorted_by_size())?;
+    let graph_model = model.capture_graph(
+        &env.device,
+        batch_size,
+        &[vec![batch_size, 3, img_size, img_size]],
+        &[boxes_tidx, scores_tidx],
+    )?;
+
+    Ok(Box::new(move |input: &[f32]| {
+        // The captured graph launches kernels loaded by `model` on `env`'s device.
+        let _keep_alive = (&env, &model);
+        graph_model.run(&[input])
+    }))
+}
+
+/// `--runtime runtime`: the unoptimised graph launched kernel-by-kernel through
+/// `teeny_test::model::RuntimeModel`, on the backend teeny-runtime was built for (CUDA, or
+/// RISC-V under qemu). The RISC-V target honours `TEENYC_CAPABILITY` (e.g. `spacemit-k3`).
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+fn validate_runtime_infer(
+    graph: &teeny_core::graph::Graph,
+    batch_size: usize,
+    st_path: &Path,
+    model_config: &ModelConfig,
+    trace: bool,
+) -> Result<BatchInferFn> {
+    use teeny_core::compiler::Target as _;
+    use teeny_core::model::LoweringMode;
+    use teeny_kernels::graph::TritonLowering;
+    use teeny_test::model::{RuntimeModel, runtime};
+
+    let device = runtime::open()?;
+    let target = runtime::default_target(&device)?;
+    println!(
+        "Backend: {} (target {})",
+        runtime::BACKEND_NAME,
+        target.target_cpu().unwrap_or_default()
+    );
+
+    let mut model = RuntimeModel::compile(
+        &device,
+        graph,
+        &TritonLowering::new(),
+        LoweringMode::Inference,
+        &target,
+        batch_size,
+        false,
+    )?;
+    model.set_trace(trace);
+    println!("Compiled {} DAG nodes.", model.len());
+
+    println!("Loading weights from {} ...", st_path.display());
+    load_weights_from_safetensors(&mut model, st_path, &model_config.weights.mapping)?;
+
+    let (boxes_tidx, scores_tidx) =
+        box_score_terminals(&model.terminal_node_indices_sorted_by_size())?;
+    Ok(Box::new(move |input: &[f32]| {
+        model.run(&device, &[input], &[boxes_tidx, scores_tidx])
+    }))
+}
+
 /// For each prediction (sorted desc by score), determine TP/FP/ignored at each IoU threshold.
 ///
 /// Returns `Vec<[Option<bool>; 10]>` where `result[pi][ti]` is:
 ///   - `Some(true)`  — TP at threshold `ti`
 ///   - `Some(false)` — FP at threshold `ti`
 ///   - `None`        — ignored (overlaps a crowd GT at IoU >= threshold, and was not matched
-///                     to a non-crowd GT at that threshold)
+///     to a non-crowd GT at that threshold)
 ///
 /// Matching is greedy, independent per threshold — matching the COCO evaluation protocol.
 /// Crowd ignore is applied only to unmatched predictions (per pycocotools semantics).
@@ -2944,25 +3040,32 @@ fn run_bench(
     warmup: usize,
     runs: usize,
     skip_map: bool,
-    sm_count: Option<u32>,
+    no_optimise: bool,
 ) -> Result<()> {
     #[cfg(not(feature = "cuda"))]
     {
-        let _ = (model_spec, dataset, img_size, warmup, runs, skip_map, sm_count);
+        let _ = (
+            model_spec,
+            dataset,
+            img_size,
+            warmup,
+            runs,
+            skip_map,
+            no_optimise,
+        );
         anyhow::bail!("bench requires the 'cuda' feature");
     }
     #[cfg(feature = "cuda")]
     {
         use std::time::Instant;
-        use teeny_compiler::compiler::{
-            backend::llvm::compiler::LlvmCompiler, target::cuda::Target,
-        };
+        use teeny_compiler::compiler::backend::llvm::compiler::LlvmCompiler;
         use teeny_core::{
             graph::{DtypeRepr, SymTensor},
             model::LoweringMode,
         };
-        use teeny_cuda::{compiler::graph::CudaGraphCompiler, testing};
-        use teeny_kernels::graph::TritonLowering;
+        use teeny_cuda::compiler::{graph::CudaGraphCompiler, target::Target};
+        use teeny_kernels::graph::{Anduin, TritonLowering};
+        use teeny_test::cuda as testing;
         use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
         // ── 1. Parse configs ───────────────────────────────────────────────────
@@ -3018,13 +3121,19 @@ fn run_bench(
         );
         let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
         let graph_rc = out.boxes.graph.clone();
-        let optimised = graph_rc.borrow().optimise();
+        let optimised = graph_rc.borrow().clone();
 
         let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache = teeny_compiler::compiler::default_cache_dir();
         let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
-        let lowering = TritonLowering::new().with_sm_count(sm_count);
+        let lowering = if no_optimise {
+            println!("(graph optimisation disabled: --no-optimise)");
+            TritonLowering::new()
+        } else {
+            println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
+            TritonLowering::new().with_optimizer(Anduin)
+        };
 
         // Compile at the largest batch size we'll test; smaller sizes reuse kernels from cache.
         let max_bs = 32usize;
@@ -3095,8 +3204,8 @@ fn run_bench(
         let sep = "─".repeat(72);
         println!("{sep}");
         println!(
-            "{:<6}  {:>14}  {:>14}  {:>14}  {}",
-            "Batch", "Throughput", "Latency", "GPU kernel", "mAP@0.5"
+            "{:<6}  {:>14}  {:>14}  {:>14}  mAP@0.5",
+            "Batch", "Throughput", "Latency", "GPU kernel"
         );
         println!(
             "{:<6}  {:>14}  {:>14}  {:>14}",
@@ -3172,6 +3281,7 @@ fn run_bench(
 
 /// Run mAP@0.5 evaluation and return the scalar score.
 #[cfg(feature = "cuda")]
+#[allow(clippy::too_many_arguments)] // the model, its validation set and the decode indices
 fn evaluate_map_score(
     model: &mut teeny_cuda::model::LoadedModel,
     device: &teeny_cuda::device::CudaDevice<'_>,
@@ -3387,6 +3497,36 @@ fn evaluate_map_score(
     })
 }
 
+/// The parameter-upload surface `load_weights_from_safetensors` needs, shared by the CUDA-graph
+/// executor's `LoadedModel` and the device-generic `RuntimeModel`.
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+trait ParamStore {
+    /// `(safetensors key, node_idx, param_idx)` for every named parameter slot.
+    fn named_params(&self) -> Vec<(String, usize, usize)>;
+    /// Uploads `data` into parameter slot `param_idx` of node `node_idx`.
+    fn upload(&mut self, node_idx: usize, param_idx: usize, data: &[f32]) -> Result<()>;
+}
+
+#[cfg(feature = "cuda")]
+impl ParamStore for teeny_cuda::model::LoadedModel {
+    fn named_params(&self) -> Vec<(String, usize, usize)> {
+        self.param_info_named().collect()
+    }
+    fn upload(&mut self, node_idx: usize, param_idx: usize, data: &[f32]) -> Result<()> {
+        self.load_param_f32(node_idx, param_idx, data)
+    }
+}
+
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+impl ParamStore for teeny_test::model::RuntimeModel<'_> {
+    fn named_params(&self) -> Vec<(String, usize, usize)> {
+        self.param_info_named().collect()
+    }
+    fn upload(&mut self, node_idx: usize, param_idx: usize, data: &[f32]) -> Result<()> {
+        self.load_param_f32(node_idx, param_idx, data)
+    }
+}
+
 /// Load pre-trained weights from a safetensors file into a compiled model.
 ///
 /// Handles fused `Conv2dBnSilu` nodes (produced by `Graph::optimise()`) which
@@ -3399,9 +3539,9 @@ fn evaluate_map_score(
 ///   `{name}.weight`   → `{name}.conv.weight`
 ///   `{name}.bn_scale` → computed from `{name}.bn.weight` + `{name}.bn.running_var`
 ///   `{name}.bn_shift` → computed from `{name}.bn.*` (all 4 BN tensors)
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", feature = "riscv"))]
 fn load_weights_from_safetensors(
-    model: &mut teeny_cuda::model::LoadedModel,
+    model: &mut impl ParamStore,
     path: &Path,
     _mapping: &HashMap<String, String>,
 ) -> Result<()> {
@@ -3410,7 +3550,7 @@ fn load_weights_from_safetensors(
     let st = SafeTensors::from_pretrained(path).with_context(|| format!("opening {:?}", path))?;
     let tensors = st.tensors().context("deserialising safetensors header")?;
 
-    let named_params: Vec<(String, usize, usize)> = model.param_info_named().collect();
+    let named_params: Vec<(String, usize, usize)> = model.named_params();
 
     if named_params.is_empty() {
         println!("Warning: model has no named parameters — verify name_scope annotations.");
@@ -3425,7 +3565,9 @@ fn load_weights_from_safetensors(
         let bytes = tv.data();
         anyhow::ensure!(bytes.len() % 4 == 0, "tensor '{}' not f32", key);
         Ok(bytes
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect())
     };
@@ -3450,7 +3592,7 @@ fn load_weights_from_safetensors(
                         .map(|(&g, &v)| g / (v + eps).sqrt())
                         .collect();
                     model
-                        .load_param_f32(*node_idx, *param_idx, &bn_scale)
+                        .upload(*node_idx, *param_idx, &bn_scale)
                         .with_context(|| format!("uploading bn_scale for '{key}'"))?;
                     loaded += 1;
                 }
@@ -3485,7 +3627,7 @@ fn load_weights_from_safetensors(
                         })
                         .collect();
                     model
-                        .load_param_f32(*node_idx, *param_idx, &bn_shift)
+                        .upload(*node_idx, *param_idx, &bn_shift)
                         .with_context(|| format!("uploading bn_shift for '{key}'"))?;
                     loaded += 1;
                 }
@@ -3515,11 +3657,13 @@ fn load_weights_from_safetensors(
                     bytes.len()
                 );
                 let data: Vec<f32> = bytes
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                     .collect();
                 model
-                    .load_param_f32(*node_idx, *param_idx, &data)
+                    .upload(*node_idx, *param_idx, &data)
                     .with_context(|| format!("uploading '{key}' to GPU"))?;
                 loaded += 1;
             }
@@ -3551,6 +3695,7 @@ fn load_weights_from_safetensors(
 
 /// Run mAP@0.5 evaluation on a set of validation images.
 #[cfg(feature = "cuda")]
+#[allow(clippy::too_many_arguments)] // the model and its validation set
 fn evaluate_map(
     model: &mut teeny_cuda::model::LoadedModel,
     device: &teeny_cuda::device::CudaDevice<'_>,

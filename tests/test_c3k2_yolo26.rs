@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-
 // C3k2 block tests for YOLO11n-n (depth=0.5, width=0.25).
 //
 // C3k2 inherits from C2f and overrides its bottleneck module list:
@@ -49,13 +48,17 @@ use vision_rs::models::yolo::yolo26::blocks::c3k2::c3k2;
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn sym_input(c: usize, h: usize, w: usize) -> SymTensor {
-    let (t, _graph) =
-        SymTensor::input(DtypeRepr::F32, vec![Some(2), Some(c), Some(h), Some(w)]);
+    let (t, _graph) = SymTensor::input(DtypeRepr::F32, vec![Some(2), Some(c), Some(h), Some(w)]);
     t
 }
 
 fn count_op(y: &SymTensor, pred: impl Fn(&Op) -> bool) -> usize {
-    y.graph.borrow().nodes.iter().filter(|n| pred(&n.op)).count()
+    y.graph
+        .borrow()
+        .nodes
+        .iter()
+        .filter(|n| pred(&n.op))
+        .count()
 }
 
 // ── backbone: shallow layer (c3k=False, c_in≠c_out, e=0.25) ─────────────────
@@ -70,9 +73,9 @@ fn test_c3k2_backbone_shallow_shortcut_true() {
     let y = c3k2::<f32>(32, 64, 1, false, true, 0.25)(x);
 
     assert_eq!(y.shape, vec![Some(2), Some(64), Some(16), Some(16)]);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::Add)),                    1);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelChunk { .. })),    2);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })),      1);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::Add)), 1);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelChunk { .. })), 2);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })), 1);
 }
 
 #[test]
@@ -101,9 +104,9 @@ fn test_c3k2_backbone_deep_shortcut_true() {
     let y = c3k2::<f32>(128, 128, 1, true, true, 0.5)(x);
 
     assert_eq!(y.shape, vec![Some(2), Some(128), Some(16), Some(16)]);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::Add)),                    2);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelChunk { .. })),    2);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })),      2);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::Add)), 2);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelChunk { .. })), 2);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })), 2);
 }
 
 #[test]
@@ -112,8 +115,8 @@ fn test_c3k2_backbone_deep_shortcut_false() {
     let y = c3k2::<f32>(128, 128, 1, true, false, 0.5)(x);
 
     assert_eq!(y.shape, vec![Some(2), Some(128), Some(16), Some(16)]);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::Add)),                    0);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })),      2);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::Add)), 0);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })), 2);
 }
 
 // ── head: c3k=False after Concat (c_in >> c_out) ─────────────────────────────
@@ -141,6 +144,6 @@ fn test_c3k2_head_c3k_true() {
     let y = c3k2::<f32>(384, 256, 1, true, true, 0.5)(x);
 
     assert_eq!(y.shape, vec![Some(2), Some(256), Some(16), Some(16)]);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::Add)),                    2);
-    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })),      2);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::Add)), 2);
+    assert_eq!(count_op(&y, |op| matches!(op, Op::ChannelCat { .. })), 2);
 }
