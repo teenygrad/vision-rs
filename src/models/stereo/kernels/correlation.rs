@@ -129,3 +129,120 @@ pub fn correlation_forward<T: Triton, D: Float, const BLOCK_C: i32>(
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Graph-level op
+// ---------------------------------------------------------------------------
+
+use core::marker::PhantomData;
+use std::any::Any;
+use std::sync::Arc;
+use teeny_core::device::program::ArgVisitor;
+use teeny_core::dtype::FloatBytes;
+use teeny_core::graph::{CustomOp, Shape};
+use teeny_core::model::{RawPtr, RuntimeOp};
+
+/// Graph-level representation of the all-pairs correlation volume.
+///
+/// Inputs, in order: `fmap1` `[B, C, H, W1]`, `fmap2` `[B, C, H, W2]`, both already
+/// channel-normalised. Output `[B, H, W1, W2]`.
+pub struct CorrelationOp<D: FloatBytes + Send + Sync + 'static> {
+    /// Kernel launch block size along the channel axis; must be >= `C`.
+    pub block_c: i32,
+    _phantom: PhantomData<D>,
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> CorrelationOp<D> {
+    /// Creates the op with the launch block size along the channel axis.
+    pub fn new(block_c: i32) -> Self {
+        Self {
+            block_c,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> CustomOp for CorrelationOp<D> {
+    fn name(&self) -> &str {
+        "stereo.correlation"
+    }
+
+    fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
+        // [B, C, H, W1] + [B, C, H, W2] -> [B, H, W1, W2]
+        let f1 = input_shapes[0];
+        let f2 = input_shapes[1];
+        vec![f1[0], f1[2], f1[3], f2[3]]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
+        let kernel = CorrelationForward::<D>::new(self.block_c);
+        Some((
+            "correlation_forward".to_string(),
+            kernel.source,
+            "entry_point".to_string(),
+            Arc::new(CorrelationRuntimeOp::<D>::new(self.block_c)),
+        ))
+    }
+}
+
+/// Runtime dispatch for the correlation volume.
+pub struct CorrelationRuntimeOp<D: FloatBytes + Send + Sync + 'static> {
+    block_c: i32,
+    _phantom: PhantomData<D>,
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> CorrelationRuntimeOp<D> {
+    /// Creates the runtime op with the launch block size along the channel axis.
+    pub fn new(block_c: i32) -> Self {
+        Self {
+            block_c,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> RuntimeOp for CorrelationRuntimeOp<D> {
+    fn n_activation_inputs(&self) -> usize {
+        2
+    }
+
+    fn param_shapes(&self, _input_shapes: &[&[usize]], _output_shape: &[usize]) -> Vec<Vec<usize>> {
+        Vec::new()
+    }
+
+    fn pack_args(
+        &self,
+        inputs: &[(RawPtr, &[usize])],
+        _params: &[RawPtr],
+        output: RawPtr,
+        output_shape: &[usize],
+        _output_row_stride: i32,
+        visitor: &mut dyn ArgVisitor,
+    ) {
+        let c = inputs[0].1[1] as i32; // fmap1 [B, C, H, W1]
+        let h = output_shape[1] as i32;
+        let w1 = output_shape[2] as i32;
+        let w2 = output_shape[3] as i32;
+        visitor.visit_ptr(inputs[0].0);
+        visitor.visit_ptr(inputs[1].0);
+        visitor.visit_ptr(output);
+        visitor.visit_i32(c);
+        visitor.visit_i32(h);
+        visitor.visit_i32(w1);
+        visitor.visit_i32(w2);
+    }
+
+    fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
+        // One CTA per left pixel: B * H * W1.
+        let _ = self.block_c;
+        [
+            (output_shape[0] * output_shape[1] * output_shape[2]) as u32,
+            1,
+            1,
+        ]
+    }
+}

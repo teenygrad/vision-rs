@@ -96,3 +96,114 @@ pub fn l2_normalize_forward<T: Triton, D: Float, const BLOCK_C: i32>(
         None,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Graph-level op
+// ---------------------------------------------------------------------------
+
+use core::marker::PhantomData;
+use std::any::Any;
+use std::sync::Arc;
+use teeny_core::device::program::ArgVisitor;
+use teeny_core::dtype::FloatBytes;
+use teeny_core::graph::{CustomOp, Shape};
+use teeny_core::model::{RawPtr, RuntimeOp};
+
+/// Graph-level representation of channel-axis L2 normalisation.
+///
+/// Shape-preserving. The input may have any rank >= 2: axis 1 is the channel axis
+/// and every axis after it is flattened into `S`.
+pub struct L2NormalizeOp<D: FloatBytes + Send + Sync + 'static> {
+    /// Kernel launch block size along the channel axis; must be >= `C`.
+    pub block_c: i32,
+    _phantom: PhantomData<D>,
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> L2NormalizeOp<D> {
+    /// Creates the op with the launch block size along the channel axis.
+    pub fn new(block_c: i32) -> Self {
+        Self {
+            block_c,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> CustomOp for L2NormalizeOp<D> {
+    fn name(&self) -> &str {
+        "stereo.l2_normalize"
+    }
+
+    fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
+        input_shapes[0].clone()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
+        let kernel = L2NormalizeForward::<D>::new(self.block_c);
+        Some((
+            "l2_normalize_forward".to_string(),
+            kernel.source,
+            "entry_point".to_string(),
+            Arc::new(L2NormalizeRuntimeOp::<D>::new(self.block_c)),
+        ))
+    }
+}
+
+/// Runtime dispatch for channel-axis L2 normalisation.
+pub struct L2NormalizeRuntimeOp<D: FloatBytes + Send + Sync + 'static> {
+    block_c: i32,
+    _phantom: PhantomData<D>,
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> L2NormalizeRuntimeOp<D> {
+    /// Creates the runtime op with the launch block size along the channel axis.
+    pub fn new(block_c: i32) -> Self {
+        Self {
+            block_c,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+/// Channel count and flattened trailing extent for a `[B, C, ...]` shape.
+fn c_and_s(shape: &[usize]) -> (i32, i32) {
+    let c = shape[1] as i32;
+    let s: usize = shape[2..].iter().product::<usize>().max(1);
+    (c, s as i32)
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> RuntimeOp for L2NormalizeRuntimeOp<D> {
+    fn n_activation_inputs(&self) -> usize {
+        1
+    }
+
+    fn param_shapes(&self, _input_shapes: &[&[usize]], _output_shape: &[usize]) -> Vec<Vec<usize>> {
+        Vec::new()
+    }
+
+    fn pack_args(
+        &self,
+        inputs: &[(RawPtr, &[usize])],
+        _params: &[RawPtr],
+        output: RawPtr,
+        output_shape: &[usize],
+        _output_row_stride: i32,
+        visitor: &mut dyn ArgVisitor,
+    ) {
+        let (c, s) = c_and_s(output_shape);
+        visitor.visit_ptr(inputs[0].0);
+        visitor.visit_ptr(output);
+        visitor.visit_i32(c);
+        visitor.visit_i32(s);
+    }
+
+    fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
+        let _ = self.block_c;
+        let (_, s) = c_and_s(output_shape);
+        [(output_shape[0] * s as usize) as u32, 1, 1]
+    }
+}
