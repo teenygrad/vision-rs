@@ -16,3 +16,6 @@
 
 /// The YOLO26 object detection model family.
 pub mod yolo;
+
+/// Stereo depth model family.
+pub mod stereo;
