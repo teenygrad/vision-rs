@@ -71,8 +71,8 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: core::ops::Add<i32, Output = T::I32Tensor>,
     T::I32Tensor: core::ops::Mul<i32, Output = T::I32Tensor>,
+    T::I32Tensor: core::ops::Add<T::I32Tensor, Output = T::I32Tensor>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Tensor<D>: Comparison<T::Tensor<D>, BoolTensor = T::BoolTensor>,
     T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let oh = IH * 2;
@@ -90,12 +90,15 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
     let ci = T::arange(0, BLOCK_CI);
     let cimask = ci.lt(CIN);
     let zeros = T::zeros::<D>(&[BLOCK_CI]);
-    let ihmax = T::full(&[BLOCK_CI], D::from_f64((IH - 1) as f64));
-    let iwmax = T::full(&[BLOCK_CI], D::from_f64((IW - 1) as f64));
-    let iwf = T::full(&[BLOCK_CI], D::from_f64(IW as f64));
-    let plane = T::full(&[BLOCK_CI], D::from_f64((IH * IW) as f64));
-    let wstride = T::full(&[BLOCK_CI], D::from_f64((COUT * 16) as f64));
-    let cif = T::cast::<i32, D>(ci, None, false);
+    let izero = T::zeros::<i32>(&[BLOCK_CI]);
+
+    // Index arithmetic is done in i32. An earlier revision computed these offsets in
+    // float and cast once, to work around an ICE on integer maximum/minimum; fp32 is
+    // only exact for integers below 2^24, and `ci * IH * IW` exceeds that for this
+    // model (Cin reaches 512), so the float route had a silent correctness ceiling.
+    let plane = IH * IW;
+    let ci_off = ci * plane;
+    let w_off = ci * (COUT * 16);
 
     // Only kernel taps matching the parity of oy+1 / ox+1 contribute.
     let py = (oy + 1) % 2;
@@ -103,33 +106,16 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
 
     // Four taps, written straight-line and summed into one expression so the body
     // holds a single reduction.
-    //
-    // The equivalent nested-loop form with a `let mut acc` did not compile here
-    // ("MLIR cleanup passes failed" in teenyc 0.3.0), but a reduced version of that
-    // pattern compiles in isolation, so the real trigger is some interaction and is
-    // not yet minimised. Treat this shape as the one known to work rather than as
-    // evidence that accumulators are broken.
     let xbase = b * CIN * IH * IW;
 
     // ---- tap (j=0, i=0) ----
     let ky00 = py;
     let kx00 = px;
-    let iy00 = (oy + 1 - ky00) / 2;
-    let ix00 = (ox + 1 - kx00) / 2;
-    let iyf00 = T::full(&[BLOCK_CI], D::from_f64(iy00 as f64));
-    let ixf00 = T::full(&[BLOCK_CI], D::from_f64(ix00 as f64));
-    let xo00 = T::cast::<D, i32>(
-        cif * plane
-            + (T::minimum(T::maximum(iyf00, zeros), ihmax) * iwf
-                + T::minimum(T::maximum(ixf00, zeros), iwmax)),
-        None,
-        false,
-    );
-    let wo00 = T::cast::<D, i32>(
-        cif * wstride + T::full(&[BLOCK_CI], D::from_f64((co * 16 + ky00 * 4 + kx00) as f64)),
-        None,
-        false,
-    );
+    let iy00 = izero + ((oy + 1 - ky00) / 2);
+    let ix00 = izero + ((ox + 1 - kx00) / 2);
+    let xo00 = ci_off
+        + (T::maximum(T::minimum(iy00, izero + (IH - 1)), izero) * IW
+            + T::maximum(T::minimum(ix00, izero + (IW - 1)), izero));
     let xv00 = T::load(
         x_ptr.add_offsets(xo00 + xbase),
         Some(cimask),
@@ -141,7 +127,7 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
         false,
     );
     let wv00 = T::load(
-        w_ptr.add_offsets(wo00),
+        w_ptr.add_offsets(w_off + (co * 16 + ky00 * 4 + kx00)),
         Some(cimask),
         Some(zeros),
         &[],
@@ -151,31 +137,20 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
         false,
     );
     // Taps whose source falls outside the input contribute nothing.
-    let xv00 = T::where_(iyf00.ge(zeros), xv00, zeros);
-    let xv00 = T::where_(iyf00.le(ihmax), xv00, zeros);
-    let xv00 = T::where_(ixf00.ge(zeros), xv00, zeros);
-    let xv00 = T::where_(ixf00.le(iwmax), xv00, zeros);
+    let xv00 = T::where_(iy00.ge(0), xv00, zeros);
+    let xv00 = T::where_(iy00.lt(IH), xv00, zeros);
+    let xv00 = T::where_(ix00.ge(0), xv00, zeros);
+    let xv00 = T::where_(ix00.lt(IW), xv00, zeros);
     let t00 = xv00 * wv00;
 
     // ---- tap (j=0, i=1) ----
     let ky01 = py;
     let kx01 = px + 2;
-    let iy01 = (oy + 1 - ky01) / 2;
-    let ix01 = (ox + 1 - kx01) / 2;
-    let iyf01 = T::full(&[BLOCK_CI], D::from_f64(iy01 as f64));
-    let ixf01 = T::full(&[BLOCK_CI], D::from_f64(ix01 as f64));
-    let xo01 = T::cast::<D, i32>(
-        cif * plane
-            + (T::minimum(T::maximum(iyf01, zeros), ihmax) * iwf
-                + T::minimum(T::maximum(ixf01, zeros), iwmax)),
-        None,
-        false,
-    );
-    let wo01 = T::cast::<D, i32>(
-        cif * wstride + T::full(&[BLOCK_CI], D::from_f64((co * 16 + ky01 * 4 + kx01) as f64)),
-        None,
-        false,
-    );
+    let iy01 = izero + ((oy + 1 - ky01) / 2);
+    let ix01 = izero + ((ox + 1 - kx01) / 2);
+    let xo01 = ci_off
+        + (T::maximum(T::minimum(iy01, izero + (IH - 1)), izero) * IW
+            + T::maximum(T::minimum(ix01, izero + (IW - 1)), izero));
     let xv01 = T::load(
         x_ptr.add_offsets(xo01 + xbase),
         Some(cimask),
@@ -187,7 +162,7 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
         false,
     );
     let wv01 = T::load(
-        w_ptr.add_offsets(wo01),
+        w_ptr.add_offsets(w_off + (co * 16 + ky01 * 4 + kx01)),
         Some(cimask),
         Some(zeros),
         &[],
@@ -197,31 +172,20 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
         false,
     );
     // Taps whose source falls outside the input contribute nothing.
-    let xv01 = T::where_(iyf01.ge(zeros), xv01, zeros);
-    let xv01 = T::where_(iyf01.le(ihmax), xv01, zeros);
-    let xv01 = T::where_(ixf01.ge(zeros), xv01, zeros);
-    let xv01 = T::where_(ixf01.le(iwmax), xv01, zeros);
+    let xv01 = T::where_(iy01.ge(0), xv01, zeros);
+    let xv01 = T::where_(iy01.lt(IH), xv01, zeros);
+    let xv01 = T::where_(ix01.ge(0), xv01, zeros);
+    let xv01 = T::where_(ix01.lt(IW), xv01, zeros);
     let t01 = xv01 * wv01;
 
     // ---- tap (j=1, i=0) ----
     let ky10 = py + 2;
     let kx10 = px;
-    let iy10 = (oy + 1 - ky10) / 2;
-    let ix10 = (ox + 1 - kx10) / 2;
-    let iyf10 = T::full(&[BLOCK_CI], D::from_f64(iy10 as f64));
-    let ixf10 = T::full(&[BLOCK_CI], D::from_f64(ix10 as f64));
-    let xo10 = T::cast::<D, i32>(
-        cif * plane
-            + (T::minimum(T::maximum(iyf10, zeros), ihmax) * iwf
-                + T::minimum(T::maximum(ixf10, zeros), iwmax)),
-        None,
-        false,
-    );
-    let wo10 = T::cast::<D, i32>(
-        cif * wstride + T::full(&[BLOCK_CI], D::from_f64((co * 16 + ky10 * 4 + kx10) as f64)),
-        None,
-        false,
-    );
+    let iy10 = izero + ((oy + 1 - ky10) / 2);
+    let ix10 = izero + ((ox + 1 - kx10) / 2);
+    let xo10 = ci_off
+        + (T::maximum(T::minimum(iy10, izero + (IH - 1)), izero) * IW
+            + T::maximum(T::minimum(ix10, izero + (IW - 1)), izero));
     let xv10 = T::load(
         x_ptr.add_offsets(xo10 + xbase),
         Some(cimask),
@@ -233,7 +197,7 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
         false,
     );
     let wv10 = T::load(
-        w_ptr.add_offsets(wo10),
+        w_ptr.add_offsets(w_off + (co * 16 + ky10 * 4 + kx10)),
         Some(cimask),
         Some(zeros),
         &[],
@@ -243,31 +207,20 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
         false,
     );
     // Taps whose source falls outside the input contribute nothing.
-    let xv10 = T::where_(iyf10.ge(zeros), xv10, zeros);
-    let xv10 = T::where_(iyf10.le(ihmax), xv10, zeros);
-    let xv10 = T::where_(ixf10.ge(zeros), xv10, zeros);
-    let xv10 = T::where_(ixf10.le(iwmax), xv10, zeros);
+    let xv10 = T::where_(iy10.ge(0), xv10, zeros);
+    let xv10 = T::where_(iy10.lt(IH), xv10, zeros);
+    let xv10 = T::where_(ix10.ge(0), xv10, zeros);
+    let xv10 = T::where_(ix10.lt(IW), xv10, zeros);
     let t10 = xv10 * wv10;
 
     // ---- tap (j=1, i=1) ----
     let ky11 = py + 2;
     let kx11 = px + 2;
-    let iy11 = (oy + 1 - ky11) / 2;
-    let ix11 = (ox + 1 - kx11) / 2;
-    let iyf11 = T::full(&[BLOCK_CI], D::from_f64(iy11 as f64));
-    let ixf11 = T::full(&[BLOCK_CI], D::from_f64(ix11 as f64));
-    let xo11 = T::cast::<D, i32>(
-        cif * plane
-            + (T::minimum(T::maximum(iyf11, zeros), ihmax) * iwf
-                + T::minimum(T::maximum(ixf11, zeros), iwmax)),
-        None,
-        false,
-    );
-    let wo11 = T::cast::<D, i32>(
-        cif * wstride + T::full(&[BLOCK_CI], D::from_f64((co * 16 + ky11 * 4 + kx11) as f64)),
-        None,
-        false,
-    );
+    let iy11 = izero + ((oy + 1 - ky11) / 2);
+    let ix11 = izero + ((ox + 1 - kx11) / 2);
+    let xo11 = ci_off
+        + (T::maximum(T::minimum(iy11, izero + (IH - 1)), izero) * IW
+            + T::maximum(T::minimum(ix11, izero + (IW - 1)), izero));
     let xv11 = T::load(
         x_ptr.add_offsets(xo11 + xbase),
         Some(cimask),
@@ -279,7 +232,7 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
         false,
     );
     let wv11 = T::load(
-        w_ptr.add_offsets(wo11),
+        w_ptr.add_offsets(w_off + (co * 16 + ky11 * 4 + kx11)),
         Some(cimask),
         Some(zeros),
         &[],
@@ -289,14 +242,13 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
         false,
     );
     // Taps whose source falls outside the input contribute nothing.
-    let xv11 = T::where_(iyf11.ge(zeros), xv11, zeros);
-    let xv11 = T::where_(iyf11.le(ihmax), xv11, zeros);
-    let xv11 = T::where_(ixf11.ge(zeros), xv11, zeros);
-    let xv11 = T::where_(ixf11.le(iwmax), xv11, zeros);
+    let xv11 = T::where_(iy11.ge(0), xv11, zeros);
+    let xv11 = T::where_(iy11.lt(IH), xv11, zeros);
+    let xv11 = T::where_(ix11.ge(0), xv11, zeros);
+    let xv11 = T::where_(ix11.lt(IW), xv11, zeros);
     let t11 = xv11 * wv11;
 
-    // Single reduction over Cin, then bias. Storing a broadcast reduction under a mask
-    // ICEs, so reduce to one element and store that.
+    // Single reduction over Cin, then bias.
     let prod = t00 + t01 + t10 + t11;
     let dot = T::sum(prod, Some(0), false) / T::full(&[1], D::from_f64(1.0));
     let bias = T::load(

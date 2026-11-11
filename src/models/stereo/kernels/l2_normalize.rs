@@ -80,12 +80,8 @@ pub fn l2_normalize_forward<T: Triton, D: Float, const BLOCK_C: i32>(
         false,
     );
 
-    // PyTorch computes x / max(||x||, eps). `T::maximum` and `T::where_` both ICE in
-    // teenyc 0.3.0 when either operand is a reduction result ("MLIR cleanup passes
-    // failed"), so this adds eps instead of clamping with it. The two agree here:
-    // for ||x|| = 0 both give 0/1e-12 = 0, and for ||x|| > 0 the relative difference is
-    // eps/||x|| <= 1e-12/||x||, far below fp32 resolution for any realistic norm.
-    let denom = T::sqrt(T::sum(x * x, Some(0), true)) + eps;
+    // max(||x||, eps) — a clamp, not an addition, exactly as F.normalize specifies.
+    let denom = T::maximum(T::sqrt(T::sum(x * x, Some(0), true)), eps);
 
     T::store(
         out_ptr.add_offsets(offs),
