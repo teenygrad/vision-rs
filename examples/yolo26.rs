@@ -921,7 +921,6 @@ fn run_train(
         );
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
-        let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
         let (input_sym, _graph_rc) = SymTensor::input(
@@ -932,7 +931,7 @@ fn run_train(
         let graph_rc = out.one2many.boxes.graph.clone();
         let graph = graph_rc.borrow();
 
-        let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+        let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = TritonLowering::new();
         let cuda_model =
@@ -1391,7 +1390,6 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
     );
     println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
-    let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
     let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
     let (input_sym, _graph_rc) = SymTensor::input(
@@ -1402,7 +1400,7 @@ fn build_view_infer_fn(model_spec: &str, img_size: usize) -> Result<InferFn> {
     let graph_rc = out.boxes.graph.clone();
     let optimised = graph_rc.borrow().clone();
 
-    let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+    let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
     let graph_cmp = CudaGraphCompiler::new(compiler);
     let lowering = TritonLowering::new().with_optimizer(Anduin);
     let cuda_model = graph_cmp.compile_model(
@@ -1719,7 +1717,6 @@ fn run_verify(
         );
         println!("(First run compiles all kernels; subsequent runs use the cache.)");
 
-        let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
         let (input_sym, _graph_rc) = SymTensor::input(
@@ -1729,10 +1726,10 @@ fn run_verify(
         let out = yolo26::<f32>(nc, &variant, DetectHead::OneToOne)(input_sym);
         let graph_rc = out.boxes.graph.clone();
 
-        let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+        let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = if optimise {
-            println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
+            println!("(graph optimisation enabled: Anduin)");
             TritonLowering::new().with_optimizer(Anduin)
         } else {
             TritonLowering::new()
@@ -1881,7 +1878,6 @@ fn run_debug_train(
             other => anyhow::bail!("unknown variant '{}'; use n/s/m/l/xl", other),
         };
 
-        let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
         println!(
@@ -1901,7 +1897,7 @@ fn run_debug_train(
         let graph_rc = out.one2many.boxes.graph.clone();
         let graph = graph_rc.borrow();
 
-        let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+        let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = TritonLowering::new();
         let cuda_model =
@@ -2234,10 +2230,9 @@ fn run_debug_infer(
             TritonLowering::new().with_optimizer(Anduin)
         };
 
-        let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
-        let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+        let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let cuda_model = graph_cmp.compile_model(
             &graph_rc.borrow(),
@@ -3123,15 +3118,14 @@ fn run_bench(
         let graph_rc = out.boxes.graph.clone();
         let optimised = graph_rc.borrow().clone();
 
-        let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".to_string());
         let kern_cache = teeny_compiler::compiler::default_cache_dir();
-        let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+        let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
         let graph_cmp = CudaGraphCompiler::new(compiler);
         let lowering = if no_optimise {
             println!("(graph optimisation disabled: --no-optimise)");
             TritonLowering::new()
         } else {
-            println!("(graph optimisation enabled: Conv2d+BN+SiLU → fused kernels)");
+            println!("(graph optimisation enabled: Anduin)");
             TritonLowering::new().with_optimizer(Anduin)
         };
 

@@ -11,13 +11,16 @@ This crate demonstrates the two-process parking garage shape:
 Run the server (add `--features cuda` and `--model ultralytics/yolo26n` for inference):
 
 ```bash
-cargo run -p parking-garage --bin parking-garage-server
+cargo run --release -p parking-garage --bin parking-garage-server
 ```
+
+Use a release build when running inference: in a debug build, decoding and resizing each image
+take several times longer than the model itself.
 
 Run the browser-facing webapp in another terminal:
 
 ```bash
-cargo run -p parking-garage --bin parking-garage-webapp
+cargo run --release -p parking-garage --bin parking-garage-webapp
 ```
 
 Then open <http://127.0.0.1:3000>.

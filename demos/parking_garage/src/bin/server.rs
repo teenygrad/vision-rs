@@ -19,12 +19,13 @@
  *   parking-garage-server [dataset_root] [--port N]
  *
  * Usage (with YOLO inference, requires --features cuda):
- *   MODELS_CACHE_DIR=... TEENYC_PATH=... TEENYC_CACHE_DIR=... \
- *     parking-garage-server [dataset_root] [--port N] --model ultralytics/yolo26n
+ *   MODELS_CACHE_DIR=... parking-garage-server [dataset_root] [--port N] --model ultralytics/yolo26n
  *
  * Weights are downloaded automatically on first run (pre-converted safetensors from
  * https://huggingface.co/datasets/teenygrad/ultralytics-yolo26) and cached under
- * MODELS_CACHE_DIR.
+ * MODELS_CACHE_DIR. teenyc is the one `cargo teeny install-toolchain` installed unless
+ * TEENYC_PATH says otherwise; compiled kernels are cached in TEENYC_CACHE_DIR (default
+ * /tmp/teenyc_cache).
  *
  * dataset_root defaults to $DATASETS_CACHE_DIR/PKLot/PKLot (falling back to
  * $HOME/.cache/vision-rs/datasets/PKLot/PKLot, matching .env.dev's own default, if
@@ -915,10 +916,9 @@ fn compile_model(
     let env = testing::setup_cuda_env()?;
     let target = Target::new(env.capability);
 
-    let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".into());
     let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
-    let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+    let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
     let graph_cmp = CudaGraphCompiler::new(compiler);
     let lowering = TritonLowering::new().with_optimizer(Anduin);
     let cuda_model =
