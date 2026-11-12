@@ -1124,6 +1124,73 @@ async fn health() -> &'static str {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
+const USAGE: &str = "\
+Usage:
+  parking-garage-server [DATASET_ROOT] [--port N]
+  parking-garage-server [DATASET_ROOT] [--port N] --model ultralytics/yolo26n
+
+Options:
+  --port N        Port to serve on (default 3001)
+  --model SPEC    Run YOLO inference with this model (needs --features cuda or riscv)
+  -h, --help      Print this help
+
+DATASET_ROOT defaults to $DATASETS_CACHE_DIR/PKLot/PKLot; if it doesn't exist, PKLot (~4.6GB)
+is downloaded into it.";
+
+/// The server's command line, as given (defaults are filled in by `main`).
+struct ServerArgs {
+    root: Option<String>,
+    port: u16,
+    model_spec: Option<String>,
+}
+
+enum ParsedArgs {
+    Run(ServerArgs),
+    Help,
+}
+
+/// Parses the server's arguments, rejecting anything it doesn't understand: falling through to
+/// starting the server can mean a 4.6GB dataset download (#11).
+fn parse_args(args: impl IntoIterator<Item = String>) -> std::result::Result<ParsedArgs, String> {
+    let mut parsed = ServerArgs {
+        root: None,
+        port: 3001,
+        model_spec: None,
+    };
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => return Ok(ParsedArgs::Help),
+            "--port" => {
+                let port = flag_value(&mut args, "--port")?;
+                parsed.port = port.parse().map_err(|_| {
+                    format!("invalid --port value '{port}': expected a port number (0-65535)")
+                })?;
+            }
+            "--model" => parsed.model_spec = Some(flag_value(&mut args, "--model")?),
+            flag if flag.starts_with('-') => return Err(format!("unknown flag: {flag}")),
+            root => {
+                if let Some(previous) = parsed.root.replace(root.to_owned()) {
+                    return Err(format!(
+                        "unexpected argument '{root}': the dataset root is already '{previous}'"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(ParsedArgs::Run(parsed))
+}
+
+/// The value following `flag`, which must be present and not itself a flag.
+fn flag_value(
+    args: &mut impl Iterator<Item = String>,
+    flag: &str,
+) -> std::result::Result<String, String> {
+    args.next()
+        .filter(|value| !value.starts_with('-'))
+        .ok_or_else(|| format!("{flag} needs a value"))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
@@ -1138,33 +1205,32 @@ async fn main() -> Result<()> {
         anyhow::bail!("--device (AOT compile) requires the 'cuda' or 'riscv' feature");
     }
 
-    let mut args = std::env::args().skip(1);
+    let ServerArgs {
+        root,
+        port,
+        model_spec,
+    } = match parse_args(std::env::args().skip(1)) {
+        Ok(ParsedArgs::Run(args)) => args,
+        Ok(ParsedArgs::Help) => {
+            println!("{USAGE}");
+            return Ok(());
+        }
+        Err(err) => {
+            eprintln!("error: {err}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
     // Matches .env.dev's own DATASETS_CACHE_DIR default, so a fresh checkout with no
     // dataset_root arg and no .env override still lands somewhere writable.
-    let datasets_cache_dir = std::env::var("DATASETS_CACHE_DIR").unwrap_or_else(|_| {
-        format!(
-            "{}/.cache/vision-rs/datasets",
-            std::env::var("HOME").unwrap_or_else(|_| ".".to_owned())
-        )
+    let root = root.unwrap_or_else(|| {
+        let datasets_cache_dir = std::env::var("DATASETS_CACHE_DIR").unwrap_or_else(|_| {
+            format!(
+                "{}/.cache/vision-rs/datasets",
+                std::env::var("HOME").unwrap_or_else(|_| ".".to_owned())
+            )
+        });
+        format!("{datasets_cache_dir}/PKLot/PKLot")
     });
-    let mut root = format!("{datasets_cache_dir}/PKLot/PKLot");
-    let mut port: u16 = 3001;
-    let mut model_spec: Option<String> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--port" => {
-                port = args.next().and_then(|p| p.parse().ok()).unwrap_or(3001);
-            }
-            "--model" => {
-                model_spec = args.next();
-            }
-            other if !other.starts_with("--") => {
-                root = other.to_owned();
-            }
-            other => eprintln!("unknown flag: {other}"),
-        }
-    }
 
     ensure_dataset(Path::new(&root))?;
 

@@ -134,3 +134,29 @@ mod cuda {
         Ok(())
     }
 }
+
+// The RISC-V counterpart of the CUDA tests above, which needs `teeny-riscv` as a direct
+// dependency (#11): it checks the kernel really lowers to RVV rather than scalar code.
+#[cfg(feature = "riscv")]
+mod riscv {
+    use teeny_riscv::compiler::compile_kernel;
+    use teeny_riscv::compiler::target::{Capability, Target};
+
+    const BLOCK_SIZE: i32 = 128;
+
+    #[test]
+    fn test_silu_4d_forward_lowers_to_rvv() -> anyhow::Result<()> {
+        dotenv::dotenv().ok();
+        let kernel = teeny_kernels::nn::activation::sigmoid::SiluForward::<f32>::new(BLOCK_SIZE);
+        let library = compile_kernel(&kernel, &Target::new(Capability::SpacemitK3), true, false)?;
+        let asm = std::fs::read_to_string(std::path::Path::new(&library).with_extension("s"))?;
+
+        for instr in ["vsetvli", "vle32.v", "vse32.v"] {
+            assert!(
+                asm.contains(instr),
+                "expected `{instr}` in the RVV assembly"
+            );
+        }
+        Ok(())
+    }
+}

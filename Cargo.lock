@@ -6172,6 +6172,7 @@ dependencies = [
  "teeny-data",
  "teeny-kernels",
  "teeny-macros",
+ "teeny-riscv",
  "teeny-test",
  "teeny-triton",
  "tokio",
