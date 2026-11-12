@@ -26,7 +26,9 @@ cargo run --release -p parking-garage --bin parking-garage-webapp
 Then open <http://127.0.0.1:3000>.
 
 The server listens on port 3001 (`--port` overrides it) and takes the dataset directory as an
-optional positional argument (see [Dataset](#dataset)). The webapp takes an optional HTTP listen
+optional positional argument (see [Dataset](#dataset)). With `--model`, `--img-size N` sets the
+model's input size (a multiple of 32, default 640). On PKLot, 1280 finds many more of the smaller,
+more distant cars, at about 3.5× the model time per image. `--help` lists every option. The webapp takes an optional HTTP listen
 address and defaults to `0.0.0.0:3000`. The page connects to port 3001 on the host it was loaded
 from; if the server runs elsewhere, add `?ws=ws://<host>:<port>/api/ws` to the page URL.
 

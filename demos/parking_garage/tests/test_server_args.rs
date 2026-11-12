@@ -81,6 +81,18 @@ fn assert_rejected(name: &str, args: &[&str], needle: &str) {
     );
 }
 
+/// Asserts the server accepted `args` and went on to scan the (empty) dataset.
+fn assert_accepted(name: &str, args: &[&str]) {
+    let out = run_server(name, args);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stdout.contains(SCANNING),
+        "`{}` was rejected:\n{stdout}{stderr}",
+        args.join(" ")
+    );
+}
+
 #[test]
 fn help_prints_usage_and_exits_successfully() {
     for flag in ["--help", "-h"] {
@@ -91,10 +103,12 @@ fn help_prints_usage_and_exits_successfully() {
             !stdout.contains(SCANNING),
             "{flag} went on to scan the dataset"
         );
-        assert!(
-            stdout.contains("--port") && stdout.contains("--model"),
-            "{flag}: {stdout}"
-        );
+        for option in ["--port", "--model", "--img-size"] {
+            assert!(
+                stdout.contains(option),
+                "{flag}: usage should mention {option}:\n{stdout}"
+            );
+        }
     }
 }
 
@@ -121,4 +135,13 @@ fn bad_port_values_are_errors() {
 #[test]
 fn model_without_a_value_is_an_error() {
     assert_rejected("model-missing", &["--model"], "--model");
+}
+
+#[test]
+fn img_size_must_be_a_positive_multiple_of_32() {
+    assert_accepted("img-1280", &["--img-size", "1280"]);
+    assert_rejected("img-abc", &["--img-size", "abc"], "abc");
+    assert_rejected("img-100", &["--img-size", "100"], "100");
+    assert_rejected("img-0", &["--img-size", "0"], "'0'");
+    assert_rejected("img-missing", &["--img-size"], "--img-size");
 }

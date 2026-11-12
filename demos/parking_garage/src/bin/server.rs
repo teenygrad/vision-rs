@@ -1127,11 +1127,13 @@ async fn health() -> &'static str {
 const USAGE: &str = "\
 Usage:
   parking-garage-server [DATASET_ROOT] [--port N]
-  parking-garage-server [DATASET_ROOT] [--port N] --model ultralytics/yolo26n
+  parking-garage-server [DATASET_ROOT] [--port N] --model ultralytics/yolo26n [--img-size N]
 
 Options:
   --port N        Port to serve on (default 3001)
   --model SPEC    Run YOLO inference with this model (needs --features cuda or riscv)
+  --img-size N    Model input size, a multiple of 32 (default 640). Larger sizes find smaller,
+                  more distant cars, at a higher cost per image.
   -h, --help      Print this help
 
 DATASET_ROOT defaults to $DATASETS_CACHE_DIR/PKLot/PKLot; if it doesn't exist, PKLot (~4.6GB)
@@ -1142,6 +1144,7 @@ struct ServerArgs {
     root: Option<String>,
     port: u16,
     model_spec: Option<String>,
+    img_size: usize,
 }
 
 enum ParsedArgs {
@@ -1156,6 +1159,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> std::result::Result<Par
         root: None,
         port: 3001,
         model_spec: None,
+        img_size: 640,
     };
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -1168,6 +1172,19 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> std::result::Result<Par
                 })?;
             }
             "--model" => parsed.model_spec = Some(flag_value(&mut args, "--model")?),
+            "--img-size" => {
+                let size = flag_value(&mut args, "--img-size")?;
+                // The model downsamples by up to 32, so other sizes don't map onto its grids.
+                parsed.img_size = size
+                    .parse()
+                    .ok()
+                    .filter(|&n: &usize| n > 0 && n % 32 == 0)
+                    .ok_or_else(|| {
+                        format!(
+                            "invalid --img-size value '{size}': expected a positive multiple of 32"
+                        )
+                    })?;
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown flag: {flag}")),
             root => {
                 if let Some(previous) = parsed.root.replace(root.to_owned()) {
@@ -1209,6 +1226,7 @@ async fn main() -> Result<()> {
         root,
         port,
         model_spec,
+        img_size,
     } = match parse_args(std::env::args().skip(1)) {
         Ok(ParsedArgs::Run(args)) => args,
         Ok(ParsedArgs::Help) => {
@@ -1248,15 +1266,19 @@ async fn main() -> Result<()> {
     let mut infer_fn: Option<InferFn> = {
         if let Some(ref spec) = model_spec {
             println!("setting up inference for model '{spec}' …");
-            Some(build_infer_fn(spec, 640)?)
+            Some(build_infer_fn(spec, img_size)?)
         } else {
             None
         }
     };
 
     #[cfg(not(any(feature = "cuda", feature = "riscv")))]
-    if model_spec.is_some() {
-        anyhow::bail!("--model requires compiling with --features cuda or --features riscv");
+    {
+        // Without a model to feed, the input size has nothing to apply to.
+        let _ = img_size;
+        if model_spec.is_some() {
+            anyhow::bail!("--model requires compiling with --features cuda or --features riscv");
+        }
     }
 
     // ── Axum HTTP / WebSocket server ───────────────────────────────────────
