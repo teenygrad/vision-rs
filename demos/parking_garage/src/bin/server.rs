@@ -19,12 +19,13 @@
  *   parking-garage-server [dataset_root] [--port N]
  *
  * Usage (with YOLO inference, requires --features cuda):
- *   MODELS_CACHE_DIR=... TEENYC_PATH=... TEENYC_CACHE_DIR=... \
- *     parking-garage-server [dataset_root] [--port N] --model ultralytics/yolo26n
+ *   MODELS_CACHE_DIR=... parking-garage-server [dataset_root] [--port N] --model ultralytics/yolo26n
  *
  * Weights are downloaded automatically on first run (pre-converted safetensors from
  * https://huggingface.co/datasets/teenygrad/ultralytics-yolo26) and cached under
- * MODELS_CACHE_DIR.
+ * MODELS_CACHE_DIR. teenyc is the one `cargo teeny install-toolchain` installed unless
+ * TEENYC_PATH says otherwise; compiled kernels are cached in TEENYC_CACHE_DIR (default
+ * /tmp/teenyc_cache).
  *
  * dataset_root defaults to $DATASETS_CACHE_DIR/PKLot/PKLot (falling back to
  * $HOME/.cache/vision-rs/datasets/PKLot/PKLot, matching .env.dev's own default, if
@@ -48,7 +49,9 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use dotenv::dotenv;
 use futures_util::{SinkExt, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
-use parking_garage::{InferenceStats, ParkingLotSnapshot, SpaceInfo};
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+use parking_garage::Detection;
+use parking_garage::{Detections, InferenceStats, ParkingLotSnapshot, SpaceInfo};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::net::TcpListener;
@@ -437,7 +440,11 @@ fn scan_lots(root: &Path) -> Result<Vec<Lot>> {
 
 // "2012-09-11_15_16_58.jpg" → "2012-09-11T15:16:58Z"
 fn parse_timestamp(filename: &str) -> String {
-    let mut parts = filename.splitn(5, '_');
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
+    let mut parts = stem.splitn(5, '_');
     let date = parts.next().unwrap_or("");
     let hh = parts.next().unwrap_or("00");
     let mm = parts.next().unwrap_or("00");
@@ -450,9 +457,6 @@ fn parse_timestamp(filename: &str) -> String {
 // `cuda` replays the Anduin-optimised graph as a CUDA graph. `riscv` (without `cuda`) runs the
 // same graph kernel-by-kernel through `teeny_test::model::RuntimeModel`, launching the RISC-V
 // kernels natively when built for a riscv64 board.
-
-#[cfg(any(feature = "cuda", feature = "riscv"))]
-const VEHICLE_CLASSES: &[usize] = &[2, 5, 7]; // COCO: car, bus, truck
 
 // Letterbox-resize image to img_size × img_size, normalise to [0,1], return NCHW f32.
 #[cfg(any(feature = "cuda", feature = "riscv"))]
@@ -915,10 +919,9 @@ fn compile_model(
     let env = testing::setup_cuda_env()?;
     let target = Target::new(env.capability);
 
-    let teenyc_path = std::env::var("TEENYC_PATH").unwrap_or_else(|_| "teenyc".into());
     let kern_cache = teeny_compiler::compiler::default_cache_dir();
 
-    let compiler = LlvmCompiler::new(teenyc_path, kern_cache)?;
+    let compiler = LlvmCompiler::with_default_teenyc(kern_cache)?;
     let graph_cmp = CudaGraphCompiler::new(compiler);
     let lowering = TritonLowering::new().with_optimizer(Anduin);
     let cuda_model =
@@ -1047,10 +1050,11 @@ fn run_aot(raw_args: &[String]) -> Result<()> {
     use teeny_kernels::graph::TritonLowering;
     use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
-    /// Matches this demo's own default (`--model ultralytics/yolo26n`, 640×640 — see
-    /// `build_infer_fn`'s variant-from-name-suffix inference and its `main()` call site).
+    /// Matches this demo's own default (`--model ultralytics/yolo26n` at `DEFAULT_IMG_SIZE` — see
+    /// `build_infer_fn`'s variant-from-name-suffix inference and its `main()` call site), so a
+    /// packaged bundle's kernel cache covers the server's default run.
     const NC: usize = 80;
-    const IMG_SIZE: usize = 640;
+    const IMG_SIZE: usize = DEFAULT_IMG_SIZE;
 
     #[derive(Parser)]
     struct AotCli {
@@ -1124,6 +1128,94 @@ async fn health() -> &'static str {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
+const USAGE: &str = "\
+Usage:
+  parking-garage-server [DATASET_ROOT] [--port N]
+  parking-garage-server [DATASET_ROOT] [--port N] --model ultralytics/yolo26n [--img-size N]
+
+Options:
+  --port N        Port to serve on (default 3001)
+  --model SPEC    Run YOLO inference with this model (needs --features cuda or riscv)
+  --img-size N    Model input size, a multiple of 32 (default 1280). Smaller sizes are faster
+                  but miss more of the small, distant cars.
+  -h, --help      Print this help
+
+DATASET_ROOT defaults to $DATASETS_CACHE_DIR/PKLot/PKLot; if it doesn't exist, PKLot (~4.6GB)
+is downloaded into it.";
+
+/// The model's default input size. PKLot frames are 1280×720, and at 640 most of the distant cars
+/// are too small to detect (#10).
+const DEFAULT_IMG_SIZE: usize = 1280;
+
+/// The server's command line, as given (defaults are filled in by `main`).
+struct ServerArgs {
+    root: Option<String>,
+    port: u16,
+    model_spec: Option<String>,
+    img_size: usize,
+}
+
+enum ParsedArgs {
+    Run(ServerArgs),
+    Help,
+}
+
+/// Parses the server's arguments, rejecting anything it doesn't understand: falling through to
+/// starting the server can mean a 4.6GB dataset download (#11).
+fn parse_args(args: impl IntoIterator<Item = String>) -> std::result::Result<ParsedArgs, String> {
+    let mut parsed = ServerArgs {
+        root: None,
+        port: 3001,
+        model_spec: None,
+        img_size: DEFAULT_IMG_SIZE,
+    };
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "-h" | "--help" => return Ok(ParsedArgs::Help),
+            "--port" => {
+                let port = flag_value(&mut args, "--port")?;
+                parsed.port = port.parse().map_err(|_| {
+                    format!("invalid --port value '{port}': expected a port number (0-65535)")
+                })?;
+            }
+            "--model" => parsed.model_spec = Some(flag_value(&mut args, "--model")?),
+            "--img-size" => {
+                let size = flag_value(&mut args, "--img-size")?;
+                // The model downsamples by up to 32, so other sizes don't map onto its grids.
+                parsed.img_size = size
+                    .parse()
+                    .ok()
+                    .filter(|&n: &usize| n > 0 && n % 32 == 0)
+                    .ok_or_else(|| {
+                        format!(
+                            "invalid --img-size value '{size}': expected a positive multiple of 32"
+                        )
+                    })?;
+            }
+            flag if flag.starts_with('-') => return Err(format!("unknown flag: {flag}")),
+            root => {
+                if let Some(previous) = parsed.root.replace(root.to_owned()) {
+                    return Err(format!(
+                        "unexpected argument '{root}': the dataset root is already '{previous}'"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(ParsedArgs::Run(parsed))
+}
+
+/// The value following `flag`, which must be present and not itself a flag.
+fn flag_value(
+    args: &mut impl Iterator<Item = String>,
+    flag: &str,
+) -> std::result::Result<String, String> {
+    args.next()
+        .filter(|value| !value.starts_with('-'))
+        .ok_or_else(|| format!("{flag} needs a value"))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
@@ -1138,33 +1230,33 @@ async fn main() -> Result<()> {
         anyhow::bail!("--device (AOT compile) requires the 'cuda' or 'riscv' feature");
     }
 
-    let mut args = std::env::args().skip(1);
+    let ServerArgs {
+        root,
+        port,
+        model_spec,
+        img_size,
+    } = match parse_args(std::env::args().skip(1)) {
+        Ok(ParsedArgs::Run(args)) => args,
+        Ok(ParsedArgs::Help) => {
+            println!("{USAGE}");
+            return Ok(());
+        }
+        Err(err) => {
+            eprintln!("error: {err}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
     // Matches .env.dev's own DATASETS_CACHE_DIR default, so a fresh checkout with no
     // dataset_root arg and no .env override still lands somewhere writable.
-    let datasets_cache_dir = std::env::var("DATASETS_CACHE_DIR").unwrap_or_else(|_| {
-        format!(
-            "{}/.cache/vision-rs/datasets",
-            std::env::var("HOME").unwrap_or_else(|_| ".".to_owned())
-        )
+    let root = root.unwrap_or_else(|| {
+        let datasets_cache_dir = std::env::var("DATASETS_CACHE_DIR").unwrap_or_else(|_| {
+            format!(
+                "{}/.cache/vision-rs/datasets",
+                std::env::var("HOME").unwrap_or_else(|_| ".".to_owned())
+            )
+        });
+        format!("{datasets_cache_dir}/PKLot/PKLot")
     });
-    let mut root = format!("{datasets_cache_dir}/PKLot/PKLot");
-    let mut port: u16 = 3001;
-    let mut model_spec: Option<String> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--port" => {
-                port = args.next().and_then(|p| p.parse().ok()).unwrap_or(3001);
-            }
-            "--model" => {
-                model_spec = args.next();
-            }
-            other if !other.starts_with("--") => {
-                root = other.to_owned();
-            }
-            other => eprintln!("unknown flag: {other}"),
-        }
-    }
 
     ensure_dataset(Path::new(&root))?;
 
@@ -1182,15 +1274,19 @@ async fn main() -> Result<()> {
     let mut infer_fn: Option<InferFn> = {
         if let Some(ref spec) = model_spec {
             println!("setting up inference for model '{spec}' …");
-            Some(build_infer_fn(spec, 640)?)
+            Some(build_infer_fn(spec, img_size)?)
         } else {
             None
         }
     };
 
     #[cfg(not(any(feature = "cuda", feature = "riscv")))]
-    if model_spec.is_some() {
-        anyhow::bail!("--model requires compiling with --features cuda or --features riscv");
+    {
+        // Without a model to feed, the input size has nothing to apply to.
+        let _ = img_size;
+        if model_spec.is_some() {
+            anyhow::bail!("--model requires compiling with --features cuda or --features riscv");
+        }
     }
 
     // ── Axum HTTP / WebSocket server ───────────────────────────────────────
@@ -1251,8 +1347,17 @@ async fn main() -> Result<()> {
             let total = spaces.len();
             let gt_occ = spaces.iter().filter(|s| s.occupied).count();
 
+            let ws_spaces: Vec<SpaceInfo> = spaces
+                .iter()
+                .map(|s| SpaceInfo {
+                    id: s.id,
+                    bbox: s.bbox,
+                    occupied: s.occupied,
+                })
+                .collect();
+
             // ── Inference (cuda/riscv feature) ─────────────────────────────
-            let inf_info: Option<(usize, f32)>;
+            let inf_info: Option<(Detections, f32)>;
             #[cfg(any(feature = "cuda", feature = "riscv"))]
             {
                 inf_info = if let Some(ref mut infer) = infer_fn {
@@ -1260,29 +1365,31 @@ async fn main() -> Result<()> {
                     match infer(&image_path) {
                         Ok(dets) => {
                             let lat_ms = t0.elapsed().as_secs_f32() * 1000.0;
-                            // Collect vehicle centers in normalised [0,1] coords.
-                            let vehicles: Vec<[f32; 2]> = dets
-                                .iter()
-                                .filter(|(cls, _, _)| VEHICLE_CLASSES.contains(cls))
-                                .map(|(_, _, [cx, cy, _, _])| [*cx, *cy])
-                                .collect();
-                            // Convert normalised centers → pixels using image dimensions.
-                            let (img_w, img_h) = image::load_from_memory(&image_bytes)
-                                .map(|i| (i.width() as f64, i.height() as f64))
-                                .unwrap_or((1280.0, 720.0));
-                            // A space is occupied when any vehicle center falls inside it.
-                            let inf_occ = spaces
-                                .iter()
-                                .filter(|s| {
-                                    let [sx, sy, sw, sh] = s.bbox;
-                                    vehicles.iter().any(|&[cx_n, cy_n]| {
-                                        let cx = cx_n as f64 * img_w;
-                                        let cy = cy_n as f64 * img_h;
-                                        cx >= sx && cx <= sx + sw && cy >= sy && cy <= sy + sh
-                                    })
+                            // The model's boxes are normalised to the image; spaces are in pixels.
+                            let (img_w, img_h) =
+                                image::ImageReader::new(std::io::Cursor::new(&image_bytes))
+                                    .with_guessed_format()
+                                    .ok()
+                                    .and_then(|r| r.into_dimensions().ok())
+                                    .map(|(w, h)| (f64::from(w), f64::from(h)))
+                                    .unwrap_or((1280.0, 720.0));
+                            let boxes = dets
+                                .into_iter()
+                                .map(|(class, score, [cx, cy, w, h])| {
+                                    let (w, h) = (f64::from(w) * img_w, f64::from(h) * img_h);
+                                    Detection {
+                                        class,
+                                        score,
+                                        bbox: [
+                                            f64::from(cx) * img_w - w / 2.0,
+                                            f64::from(cy) * img_h - h / 2.0,
+                                            w,
+                                            h,
+                                        ],
+                                    }
                                 })
-                                .count();
-                            Some((inf_occ, lat_ms))
+                                .collect();
+                            Some((Detections::from_boxes(&ws_spaces, boxes), lat_ms))
                         }
                         Err(e) => {
                             eprintln!("inference error: {e:#}");
@@ -1299,7 +1406,7 @@ async fn main() -> Result<()> {
             }
 
             // ── Log ────────────────────────────────────────────────────────
-            if let Some((inf_occ, lat_ms)) = inf_info {
+            if let Some((ref detections, lat_ms)) = inf_info {
                 let stats = inference_stats.get_or_insert_with(InferenceStats::default);
                 stats.record(f64::from(lat_ms));
                 println!(
@@ -1308,7 +1415,7 @@ async fn main() -> Result<()> {
                     img.filename,
                     gt_occ,
                     total,
-                    inf_occ,
+                    detections.occupied_ids.len(),
                     total,
                     lat_ms,
                     stats.count,
@@ -1327,17 +1434,9 @@ async fn main() -> Result<()> {
                 );
             }
 
-            // ── Build WebSocket payload (ground-truth annotations) ─────────
+            // ── Build WebSocket payload ────────────────────────────────────
             let occupied_ids: Vec<usize> =
                 spaces.iter().filter(|s| s.occupied).map(|s| s.id).collect();
-            let ws_spaces: Vec<SpaceInfo> = spaces
-                .iter()
-                .map(|s| SpaceInfo {
-                    id: s.id,
-                    bbox: s.bbox,
-                    occupied: s.occupied,
-                })
-                .collect();
             let snapshot = ParkingLotSnapshot {
                 lot: lot.name.clone(),
                 timestamp: parse_timestamp(&img.filename),
@@ -1346,6 +1445,7 @@ async fn main() -> Result<()> {
                 occupied_ids,
                 spaces: ws_spaces,
                 inference: inference_stats.clone(),
+                detections: inf_info.map(|(detections, _)| detections),
             };
             let json = serde_json::to_string(&snapshot).expect("serialisation failed");
             let _ = tx.send(json);
@@ -1353,5 +1453,39 @@ async fn main() -> Result<()> {
             lot.cursor = (lot.cursor + 1) % lot.images.len();
         }
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ParsedArgs, parse_args, parse_timestamp};
+
+    fn parse(args: &[&str]) -> ParsedArgs {
+        parse_args(args.iter().map(|a| a.to_string())).expect("valid arguments")
+    }
+
+    #[test]
+    fn img_size_defaults_to_1280() {
+        // PKLot frames are 1280x720; at 640 most of the distant cars are too small to detect.
+        let ParsedArgs::Run(args) = parse(&[]) else {
+            panic!("no arguments should run the server");
+        };
+        assert_eq!(args.img_size, 1280);
+    }
+
+    #[test]
+    fn img_size_flag_overrides_the_default() {
+        let ParsedArgs::Run(args) = parse(&["--img-size", "640"]) else {
+            panic!("--img-size 640 should run the server");
+        };
+        assert_eq!(args.img_size, 640);
+    }
+
+    #[test]
+    fn timestamp_drops_the_file_extension() {
+        assert_eq!(
+            parse_timestamp("2012-09-11_15_16_58.jpg"),
+            "2012-09-11T15:16:58Z"
+        );
     }
 }

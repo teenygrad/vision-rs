@@ -15,7 +15,7 @@
           Vision RS demo
         </span>
         <h1 class="mt-3 text-4xl font-semibold tracking-tight text-white">
-          Parking Garage Monitor
+          <a href="#" class="hover:text-blue-200" @click.prevent="closeLot">Parking Garage Monitor</a>
         </h1>
         <div class="mt-2 flex items-center gap-2">
           <span class="h-2.5 w-2.5 rounded-full" :class="statusDot"></span>
@@ -46,50 +46,313 @@
         </div>
       </section>
 
-      <p v-if="lotOrder.length === 0" class="text-sm text-slate-500">
-        Waiting for data from server…
-      </p>
+      <!-- ── All lots ─────────────────────────────────────────────────────── -->
+      <template v-if="!selectedLot">
+        <p v-if="lotOrder.length === 0" class="text-sm text-slate-500">
+          Waiting for data from server…
+        </p>
 
-      <div class="grid gap-6 sm:grid-cols-2">
-        <article
-          v-for="lot in lotOrder"
-          :key="lot"
+        <div class="grid gap-6 sm:grid-cols-2">
+          <article
+            v-for="lot in lotOrder"
+            :key="lot"
+            role="button"
+            tabindex="0"
+            :aria-label="`Show details for ${lot}`"
+            class="group cursor-pointer overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04] transition hover:border-blue-400/50 hover:bg-white/[0.07] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+            @click="openLot(lot)"
+            @keydown.enter="openLot(lot)"
+            @keydown.space.prevent="openLot(lot)"
+          >
+            <!-- Card header -->
+            <div class="flex items-center justify-between border-b border-white/10 p-4">
+              <h2 class="font-semibold capitalize text-white">{{ lot }}</h2>
+              <span class="flex items-center gap-3 text-xs text-slate-400">
+                {{ lots[lot]?.timestamp }}
+                <span class="text-blue-300 opacity-0 transition group-hover:opacity-100">
+                  Details →
+                </span>
+              </span>
+            </div>
+
+            <!-- Legend (only when the server runs a model) -->
+            <div
+              v-if="lots[lot]?.detections"
+              class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-white/10 px-4 py-2 text-xs text-slate-400"
+            >
+              <span class="flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-sm bg-red-500/60"></span>Annotated occupied
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-sm bg-green-500/60"></span>Annotated free
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-sm border-2 border-amber-400"></span>Vehicle detected
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-sm border-2 border-sky-400"></span>Other object
+              </span>
+            </div>
+
+            <!-- Image + bounding box overlay -->
+            <div class="relative w-full bg-slate-900">
+              <canvas :id="`canvas-${lot}`" class="block w-full"></canvas>
+            </div>
+
+            <!-- Occupancy stats -->
+            <div class="grid grid-cols-3 gap-3 p-4 text-center">
+              <div>
+                <p class="text-xs font-medium uppercase tracking-wide text-slate-400">Total</p>
+                <p class="mt-1 text-2xl font-semibold text-white">
+                  {{ lots[lot]?.total_spaces }}
+                </p>
+              </div>
+              <div>
+                <p class="text-xs font-medium uppercase tracking-wide text-red-400">Occupied</p>
+                <p class="mt-1 text-2xl font-semibold text-red-300">
+                  {{ lots[lot]?.occupied_ids?.length }}
+                </p>
+              </div>
+              <div>
+                <p class="text-xs font-medium uppercase tracking-wide text-emerald-400">Free</p>
+                <p class="mt-1 text-2xl font-semibold text-emerald-300">
+                  {{ (lots[lot]?.total_spaces ?? 0) - (lots[lot]?.occupied_ids?.length ?? 0) }}
+                </p>
+              </div>
+            </div>
+
+            <!-- What the model made of this image -->
+            <p
+              v-if="lots[lot]?.detections"
+              class="border-t border-white/10 px-4 py-3 text-center text-sm text-slate-300"
+            >
+              Model:
+              <span class="font-semibold text-amber-300">
+                {{ lots[lot].detections.occupied_ids.length }}
+              </span>
+              of {{ lots[lot].total_spaces }} spaces occupied ·
+              {{ vehicleCount(lots[lot].detections) }} vehicle{{
+                vehicleCount(lots[lot].detections) === 1 ? "" : "s"
+              }}
+              detected
+            </p>
+          </article>
+        </div>
+      </template>
+
+      <!-- ── One lot in detail ────────────────────────────────────────────── -->
+      <section v-else aria-label="Lot details">
+        <!-- Navigation: back to all lots, or straight to another lot -->
+        <nav class="mb-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            class="rounded-lg border border-white/15 bg-white/[0.06] px-3 py-1.5 text-sm font-medium text-white hover:bg-white/[0.12] focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+            @click="closeLot"
+          >
+            ← All lots
+          </button>
+          <div class="flex flex-wrap gap-1" role="tablist" aria-label="Lots">
+            <button
+              v-for="lot in lotOrder"
+              :key="lot"
+              type="button"
+              role="tab"
+              :aria-selected="lot === selectedLot"
+              class="rounded-lg px-3 py-1.5 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              :class="
+                lot === selectedLot
+                  ? 'bg-blue-500/20 text-blue-100'
+                  : 'text-slate-400 hover:bg-white/[0.06] hover:text-white'
+              "
+              @click="switchLot(lot)"
+            >
+              {{ lot }}
+            </button>
+          </div>
+          <span class="ml-auto text-xs text-slate-500">Esc or Back returns to all lots · ←/→ switch lots</span>
+        </nav>
+
+        <p v-if="!detail" class="text-sm text-slate-500">Waiting for {{ selectedLot }}…</p>
+
+        <div
+          v-else
           class="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04]"
         >
-          <!-- Card header -->
-          <div class="flex items-center justify-between border-b border-white/10 p-4">
-            <h2 class="font-semibold capitalize text-white">{{ lot }}</h2>
-            <span class="text-xs text-slate-400">{{ lots[lot]?.timestamp }}</span>
+          <!-- Title + live/paused -->
+          <div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 p-4">
+            <div>
+              <h2 class="text-xl font-semibold capitalize text-white">{{ detail.lot }}</h2>
+              <p class="text-xs text-slate-400">{{ detail.timestamp }}</p>
+            </div>
+            <button
+              type="button"
+              class="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+              :class="
+                paused
+                  ? 'border-amber-400/40 bg-amber-400/10 text-amber-200'
+                  : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200'
+              "
+              :title="paused ? 'Resume following new images' : 'Hold this image while you inspect it'"
+              @click="togglePause"
+            >
+              <span
+                class="h-2 w-2 rounded-full"
+                :class="paused ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'"
+              ></span>
+              {{ paused ? "Paused — resume" : "Live — pause" }}
+            </button>
           </div>
 
-          <!-- Image + bounding box overlay -->
-          <div class="relative w-full bg-slate-900">
-            <canvas :id="`canvas-${lot}`" class="block w-full"></canvas>
+          <!-- Display options -->
+          <div class="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-white/10 px-4 py-3 text-sm text-slate-300">
+            <label class="flex items-center gap-2">
+              <input v-model="view.spaces" type="checkbox" class="accent-blue-400" />
+              Annotations
+            </label>
+            <label class="flex items-center gap-2" :class="{ 'opacity-40': !detail.detections }">
+              <input
+                v-model="view.detections"
+                type="checkbox"
+                class="accent-blue-400"
+                :disabled="!detail.detections"
+              />
+              Detections
+            </label>
+            <label class="flex items-center gap-2" :class="{ 'opacity-40': !detail.detections }">
+              <input
+                v-model="view.labels"
+                type="checkbox"
+                class="accent-blue-400"
+                :disabled="!detail.detections"
+              />
+              Labels
+            </label>
+            <label class="flex items-center gap-2" :class="{ 'opacity-40': !detail.detections }">
+              <input
+                v-model="view.diff"
+                type="checkbox"
+                class="accent-blue-400"
+                :disabled="!detail.detections"
+              />
+              Highlight disagreements
+            </label>
+            <div class="ml-auto flex overflow-hidden rounded-lg border border-white/15 text-xs">
+              <button
+                type="button"
+                class="px-3 py-1.5"
+                :class="view.fit ? 'bg-white/[0.12] text-white' : 'text-slate-400 hover:text-white'"
+                @click="view.fit = true"
+              >
+                Fit
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1.5"
+                :class="!view.fit ? 'bg-white/[0.12] text-white' : 'text-slate-400 hover:text-white'"
+                @click="view.fit = false"
+              >
+                Full size
+              </button>
+            </div>
           </div>
 
-          <!-- Occupancy stats -->
-          <div class="grid grid-cols-3 gap-3 p-4 text-center">
-            <div>
-              <p class="text-xs font-medium uppercase tracking-wide text-slate-400">Total</p>
-              <p class="mt-1 text-2xl font-semibold text-white">
-                {{ lots[lot]?.total_spaces }}
+          <!-- Legend -->
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-white/10 px-4 py-2 text-xs text-slate-400">
+            <span class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 rounded-sm bg-red-500/60"></span>Annotated occupied
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 rounded-sm bg-green-500/60"></span>Annotated free
+            </span>
+            <template v-if="detail.detections">
+              <span class="flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-sm border-2 border-amber-400"></span>Vehicle detected
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-sm border-2 border-sky-400"></span>Other object
+              </span>
+              <template v-if="view.diff">
+                <span class="flex items-center gap-1.5">
+                  <span class="h-2.5 w-2.5 rounded-sm border-2 border-dashed border-pink-400"></span>Missed by model
+                </span>
+                <span class="flex items-center gap-1.5">
+                  <span class="h-2.5 w-2.5 rounded-sm border-2 border-dashed border-violet-400"></span>Model-only occupied
+                </span>
+              </template>
+            </template>
+          </div>
+
+          <!-- Full image -->
+          <div class="overflow-auto bg-slate-900" :class="{ 'max-h-[80vh]': !view.fit }">
+            <canvas
+              id="canvas-detail"
+              class="block"
+              :class="view.fit ? 'w-full' : 'max-w-none'"
+            ></canvas>
+          </div>
+
+          <!-- Annotations vs model -->
+          <div class="grid grid-cols-2 gap-3 border-t border-white/10 p-4 text-center sm:grid-cols-4 lg:grid-cols-7">
+            <div v-for="stat in detailStats" :key="stat.label">
+              <p class="text-xs font-medium uppercase tracking-wide" :class="stat.labelClass">
+                {{ stat.label }}
               </p>
-            </div>
-            <div>
-              <p class="text-xs font-medium uppercase tracking-wide text-red-400">Occupied</p>
-              <p class="mt-1 text-2xl font-semibold text-red-300">
-                {{ lots[lot]?.occupied_ids?.length }}
-              </p>
-            </div>
-            <div>
-              <p class="text-xs font-medium uppercase tracking-wide text-emerald-400">Free</p>
-              <p class="mt-1 text-2xl font-semibold text-emerald-300">
-                {{ (lots[lot]?.total_spaces ?? 0) - (lots[lot]?.occupied_ids?.length ?? 0) }}
+              <p class="mt-1 text-2xl font-semibold tabular-nums" :class="stat.valueClass">
+                {{ stat.value }}
               </p>
             </div>
           </div>
-        </article>
-      </div>
+
+          <p
+            v-if="!detail.detections"
+            class="border-t border-white/10 px-4 py-3 text-sm text-slate-400"
+          >
+            The server is running without <code class="text-slate-300">--model</code>, so only the
+            annotations are shown.
+          </p>
+
+          <!-- Detections -->
+          <div v-else class="border-t border-white/10 p-4">
+            <h3 class="mb-2 text-sm font-medium uppercase tracking-wide text-slate-400">
+              Detections ({{ detailBoxes.length }})
+            </h3>
+            <p v-if="detailBoxes.length === 0" class="text-sm text-slate-500">
+              The model found nothing in this image.
+            </p>
+            <div v-else class="max-h-80 overflow-auto rounded-lg border border-white/10">
+              <table class="w-full text-left text-sm tabular-nums">
+                <thead class="sticky top-0 bg-slate-900 text-xs uppercase tracking-wide text-slate-400">
+                  <tr>
+                    <th class="px-3 py-2">#</th>
+                    <th class="px-3 py-2">Class</th>
+                    <th class="px-3 py-2">Score</th>
+                    <th class="px-3 py-2">Size (px)</th>
+                    <th class="px-3 py-2">Space</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="row in detailBoxes"
+                    :key="row.index"
+                    class="cursor-default border-t border-white/5"
+                    :class="hovered === row.index ? 'bg-white/[0.08]' : 'hover:bg-white/[0.04]'"
+                    @mouseenter="hovered = row.index"
+                    @mouseleave="hovered = null"
+                  >
+                    <td class="px-3 py-1.5 text-slate-500">{{ row.index + 1 }}</td>
+                    <td class="px-3 py-1.5" :class="row.vehicle ? 'text-amber-300' : 'text-sky-300'">
+                      {{ row.label }}
+                    </td>
+                    <td class="px-3 py-1.5">{{ row.score.toFixed(2) }}</td>
+                    <td class="px-3 py-1.5 text-slate-300">{{ row.size }}</td>
+                    <td class="px-3 py-1.5 text-slate-300">{{ row.space ?? "—" }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <script type="module">
@@ -97,13 +360,127 @@
         computed,
         createApp,
         nextTick,
+        reactive,
         ref,
+        watch,
       } from "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js";
+
+      // COCO car, bus, truck: the classes the server counts as parked vehicles.
+      const VEHICLE_CLASSES = new Set([2, 5, 7]);
 
       // Override with ?ws=ws://host:port/api/ws query param if needed.
       const WS_URL =
         new URLSearchParams(window.location.search).get("ws") ??
         `ws://${window.location.hostname}:3001/api/ws`;
+
+      // The detail view lives at #/lot/<name>, so it can be linked to and the browser's Back
+      // button returns to all lots.
+      function lotFromHash() {
+        const m = window.location.hash.match(/^#\/lot\/(.+)$/);
+        return m ? decodeURIComponent(m[1]) : null;
+      }
+
+      function centre([x, y, w, h]) {
+        return [x + w / 2, y + h / 2];
+      }
+
+      function inside([px, py], [x, y, w, h]) {
+        return px >= x && px <= x + w && py >= y && py <= y + h;
+      }
+
+      // Each lot's decoded image, so redrawing (toggling an option, hovering a detection)
+      // doesn't decode the JPEG again.
+      const images = new Map();
+      function loadImage(snapshot) {
+        const cached = images.get(snapshot.lot);
+        if (cached && cached.b64 === snapshot.image_b64) return cached.ready;
+        const img = new Image();
+        const ready = new Promise((resolve, reject) => {
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+        });
+        img.src = `data:image/jpeg;base64,${snapshot.image_b64}`;
+        images.set(snapshot.lot, { b64: snapshot.image_b64, ready });
+        return ready;
+      }
+
+      // Draws `snapshot`'s image with whichever overlays `opts` turns on.
+      async function drawSnapshot(canvas, snapshot, opts) {
+        const img = await loadImage(snapshot);
+        if (!canvas.isConnected) return;
+        const ctx = canvas.getContext("2d");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        ctx.drawImage(img, 0, 0);
+
+        const dets = snapshot.detections;
+        const modelOccupied = new Set(dets?.occupied_ids ?? []);
+
+        if (opts.spaces) {
+          for (const space of snapshot.spaces) {
+            const [x, y, w, h] = space.bbox;
+            const color = space.occupied ? "#ef4444" : "#22c55e";
+            ctx.globalAlpha = 0.25;
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, w, h);
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(x, y, w, h);
+          }
+        }
+
+        if (dets && opts.diff) {
+          ctx.save();
+          ctx.setLineDash([6, 4]);
+          ctx.lineWidth = 3;
+          for (const space of snapshot.spaces) {
+            const model = modelOccupied.has(space.id);
+            if (model === space.occupied) continue;
+            ctx.strokeStyle = space.occupied ? "#f472b6" : "#a78bfa";
+            const [x, y, w, h] = space.bbox;
+            ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+          }
+          ctx.restore();
+        }
+
+        if (dets && opts.detections) drawDetections(ctx, canvas, dets.boxes, opts);
+      }
+
+      // The model's boxes, each labelled with its class and score.
+      function drawDetections(ctx, canvas, boxes, opts) {
+        const fontPx = Math.max(10, Math.round(canvas.width / 90));
+        ctx.font = `${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.textBaseline = "top";
+        boxes.forEach((det, i) => {
+          const highlighted = opts.highlight === i;
+          const dimmed = opts.highlight != null && !highlighted;
+          const [x, y, w, h] = det.bbox;
+          const color = highlighted
+            ? "#ffffff"
+            : VEHICLE_CLASSES.has(det.class)
+              ? "#fbbf24"
+              : "#38bdf8";
+          ctx.globalAlpha = dimmed ? 0.35 : 1;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = highlighted ? 4 : 2;
+          ctx.strokeRect(x, y, w, h);
+
+          if (opts.labels || highlighted) {
+            const text = `${det.label} ${det.score.toFixed(2)}`;
+            const pad = 2;
+            const tw = ctx.measureText(text).width + 2 * pad;
+            const th = fontPx + 2 * pad;
+            // Above the box, unless that would leave the image.
+            const ty = y - th >= 0 ? y - th : y;
+            ctx.fillStyle = color;
+            ctx.fillRect(x, ty, tw, th);
+            ctx.fillStyle = "#0f172a";
+            ctx.fillText(text, x + pad, ty + pad);
+          }
+          ctx.globalAlpha = 1;
+        });
+      }
 
       createApp({
         setup() {
@@ -111,6 +488,147 @@
           const lotOrder = ref([]);
           const socketStatus = ref("connecting");
           const inference = ref(null);
+
+          // ── Detail view state ──
+          const selectedLot = ref(lotFromHash());
+          // Whether opening the detail view pushed a history entry we can go Back over.
+          let pushedDetail = false;
+          const paused = ref(false);
+          const frozen = ref(null);
+          const hovered = ref(null);
+          const view = reactive({
+            spaces: true,
+            detections: true,
+            labels: true,
+            diff: true,
+            fit: true,
+          });
+
+          const detail = computed(() =>
+            paused.value ? frozen.value : (lots.value[selectedLot.value] ?? null),
+          );
+
+          const detailStats = computed(() => {
+            const s = detail.value;
+            if (!s) return [];
+            const annotated = s.spaces.filter((sp) => sp.occupied).length;
+            const stats = [
+              { label: "Spaces", value: s.total_spaces, labelClass: "text-slate-400", valueClass: "text-white" },
+              { label: "Annotated occupied", value: annotated, labelClass: "text-red-400", valueClass: "text-red-300" },
+            ];
+            if (!s.detections) return stats;
+            const model = new Set(s.detections.occupied_ids);
+            const both = s.spaces.filter((sp) => sp.occupied && model.has(sp.id)).length;
+            const missed = s.spaces.filter((sp) => sp.occupied && !model.has(sp.id)).length;
+            const extra = s.spaces.filter((sp) => !sp.occupied && model.has(sp.id)).length;
+            return [
+              ...stats,
+              { label: "Model occupied", value: model.size, labelClass: "text-amber-400", valueClass: "text-amber-300" },
+              { label: "Agree (occupied)", value: both, labelClass: "text-emerald-400", valueClass: "text-emerald-300" },
+              { label: "Missed", value: missed, labelClass: "text-pink-400", valueClass: "text-pink-300" },
+              { label: "Model-only", value: extra, labelClass: "text-violet-400", valueClass: "text-violet-300" },
+              { label: "Vehicles", value: vehicleCount(s.detections), labelClass: "text-slate-400", valueClass: "text-white" },
+            ];
+          });
+
+          // Detections, highest score first, with the space each vehicle's centre falls in.
+          const detailBoxes = computed(() => {
+            const s = detail.value;
+            if (!s?.detections) return [];
+            return s.detections.boxes
+              .map((det, index) => {
+                const vehicle = VEHICLE_CLASSES.has(det.class);
+                const c = centre(det.bbox);
+                const space = vehicle
+                  ? s.spaces.find((sp) => inside(c, sp.bbox))?.id
+                  : undefined;
+                const [, , w, h] = det.bbox;
+                return {
+                  index,
+                  label: det.label,
+                  score: det.score,
+                  vehicle,
+                  size: `${Math.round(w)}×${Math.round(h)}`,
+                  space,
+                };
+              })
+              .sort((a, b) => b.score - a.score);
+          });
+
+          function drawDetail() {
+            const canvas = document.getElementById("canvas-detail");
+            if (!canvas || !detail.value) return;
+            drawSnapshot(canvas, detail.value, { ...view, highlight: hovered.value });
+          }
+
+          watch([detail, hovered, () => ({ ...view })], () => nextTick(drawDetail));
+
+          function openLot(lot) {
+            if (lotFromHash() !== lot) {
+              window.location.hash = `#/lot/${encodeURIComponent(lot)}`;
+              pushedDetail = true;
+            }
+            showLot(lot);
+          }
+
+          // Switches lots inside the detail view without piling up history entries.
+          function switchLot(lot) {
+            history.replaceState(null, "", `#/lot/${encodeURIComponent(lot)}`);
+            showLot(lot);
+          }
+
+          function showLot(lot) {
+            selectedLot.value = lot;
+            paused.value = false;
+            frozen.value = null;
+            hovered.value = null;
+            window.scrollTo({ top: 0 });
+          }
+
+          function closeLot() {
+            if (!selectedLot.value) return;
+            if (pushedDetail) {
+              // Undo our own history entry, so Back afterwards doesn't reopen the lot.
+              pushedDetail = false;
+              history.back();
+            } else {
+              history.replaceState(null, "", window.location.pathname + window.location.search);
+              selectedLot.value = null;
+            }
+          }
+
+          function togglePause() {
+            frozen.value = paused.value ? null : detail.value;
+            paused.value = !paused.value;
+          }
+
+          window.addEventListener("hashchange", () => {
+            const lot = lotFromHash();
+            if (!lot) pushedDetail = false;
+            selectedLot.value = lot;
+            paused.value = false;
+            frozen.value = null;
+            hovered.value = null;
+          });
+
+          window.addEventListener("keydown", (event) => {
+            if (!selectedLot.value) return;
+            if (event.key === "Escape") {
+              closeLot();
+            } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              const order = lotOrder.value;
+              const i = order.indexOf(selectedLot.value);
+              if (i < 0 || order.length < 2) return;
+              const step = event.key === "ArrowRight" ? 1 : -1;
+              switchLot(order[(i + step + order.length) % order.length]);
+            }
+          });
+
+          // When returning to all lots, the cards' canvases are new: draw the latest images.
+          watch(selectedLot, (lot) => {
+            if (lot) return;
+            nextTick(() => Object.values(lots.value).forEach(drawCard));
+          });
 
           const inferenceStats = computed(() => {
             const s = inference.value;
@@ -146,29 +664,20 @@
             return `Connecting to ${WS_URL}…`;
           });
 
-          function drawLot(snapshot) {
+          function drawCard(snapshot) {
             const canvas = document.getElementById(`canvas-${snapshot.lot}`);
             if (!canvas) return;
-            const ctx = canvas.getContext("2d");
-            const img = new Image();
-            img.onload = () => {
-              canvas.width = img.naturalWidth;
-              canvas.height = img.naturalHeight;
-              ctx.drawImage(img, 0, 0);
+            drawSnapshot(canvas, snapshot, {
+              spaces: true,
+              detections: true,
+              labels: true,
+              diff: false,
+              highlight: null,
+            });
+          }
 
-              for (const space of snapshot.spaces) {
-                const [x, y, w, h] = space.bbox;
-                const color = space.occupied ? "#ef4444" : "#22c55e";
-                ctx.globalAlpha = 0.25;
-                ctx.fillStyle = color;
-                ctx.fillRect(x, y, w, h);
-                ctx.globalAlpha = 1;
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 1.5;
-                ctx.strokeRect(x, y, w, h);
-              }
-            };
-            img.src = `data:image/jpeg;base64,${snapshot.image_b64}`;
+          function vehicleCount(detections) {
+            return detections.boxes.filter((d) => VEHICLE_CLASSES.has(d.class)).length;
           }
 
           function handleSnapshot(snapshot) {
@@ -177,7 +686,7 @@
             }
             lots.value = { ...lots.value, [snapshot.lot]: snapshot };
             if (snapshot.inference) inference.value = snapshot.inference;
-            nextTick(() => drawLot(snapshot));
+            if (!selectedLot.value) nextTick(() => drawCard(snapshot));
           }
 
           function connect() {
@@ -208,7 +717,27 @@
 
           connect();
 
-          return { lots, lotOrder, statusDot, statusText, inference, inferenceStats, formatMs };
+          return {
+            lots,
+            lotOrder,
+            statusDot,
+            statusText,
+            inference,
+            inferenceStats,
+            formatMs,
+            vehicleCount,
+            selectedLot,
+            detail,
+            detailStats,
+            detailBoxes,
+            paused,
+            hovered,
+            view,
+            openLot,
+            switchLot,
+            closeLot,
+            togglePause,
+          };
         },
       }).mount("#app");
     </script>

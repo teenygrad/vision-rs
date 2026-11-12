@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/teenygrad/vision-rs/compare/vision-rs-v0.1.5...vision-rs-v0.1.6) - 2026-11-12
+
+### Added
+
+- *(parking-garage)* --img-size flag for the server's model input size ([#17](https://github.com/teenygrad/vision-rs/pull/17))
+- *(parking-garage)* send the model's detections to the page and draw them ([#18](https://github.com/teenygrad/vision-rs/pull/18))
+- *(parking-garage)* default the model input size to 1280 ([#19](https://github.com/teenygrad/vision-rs/pull/19))
+- *(parking-garage)* click a lot for a detailed, full-size view ([#20](https://github.com/teenygrad/vision-rs/pull/20))
+
+### Fixed
+
+- strict CLI parsing for the parking-garage binaries; teeny-riscv as a direct dependency ([#15](https://github.com/teenygrad/vision-rs/pull/15))
+- find teenyc without TEENYC_PATH; correct the env and performance docs ([#16](https://github.com/teenygrad/vision-rs/pull/16))
+
 ## [0.1.5](https://github.com/teenygrad/vision-rs/compare/vision-rs-v0.1.4...vision-rs-v0.1.5) - 2026-11-12
 
 ### Other

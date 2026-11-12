@@ -11,19 +11,25 @@ This crate demonstrates the two-process parking garage shape:
 Run the server (add `--features cuda` and `--model ultralytics/yolo26n` for inference):
 
 ```bash
-cargo run -p parking-garage --bin parking-garage-server
+cargo run --release -p parking-garage --bin parking-garage-server
 ```
+
+Use a release build when running inference: in a debug build, decoding and resizing each image
+take several times longer than the model itself.
 
 Run the browser-facing webapp in another terminal:
 
 ```bash
-cargo run -p parking-garage --bin parking-garage-webapp
+cargo run --release -p parking-garage --bin parking-garage-webapp
 ```
 
 Then open <http://127.0.0.1:3000>.
 
 The server listens on port 3001 (`--port` overrides it) and takes the dataset directory as an
-optional positional argument (see [Dataset](#dataset)). The webapp takes an optional HTTP listen
+optional positional argument (see [Dataset](#dataset)). With `--model`, `--img-size N` sets the
+model's input size (a multiple of 32, default 1280, PKLot's frame width). `--img-size 640` is
+about 3.5× faster per image but misses many of the smaller, more distant cars. `--help` lists every
+option. The webapp takes an optional HTTP listen
 address and defaults to `0.0.0.0:3000`. The page connects to port 3001 on the host it was loaded
 from; if the server runs elsewhere, add `?ws=ws://<host>:<port>/api/ws` to the page URL.
 

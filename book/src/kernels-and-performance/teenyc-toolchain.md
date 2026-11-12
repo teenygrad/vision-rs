@@ -12,8 +12,9 @@ install it.
 **JIT (just-in-time)**: during normal development — running `cargo test`,
 the `yolo26` example, or anything else that touches the `cuda` feature —
 kernels are compiled by `teenyc` at runtime, the first time each kernel is
-invoked, then cached. This is what `TEENYC_PATH` is for: the process needs
-to be able to shell out to the compiler on demand.
+invoked, then cached, so the process needs to be able to shell out to the
+compiler on demand. It uses the `teenyc` toolchain `cargo teeny
+install-toolchain` installed, or the binary `TEENYC_PATH` names.
 
 **AOT (ahead-of-time)**: `cargo teeny package`/`aot` cross-compiles kernels
 *before* deployment, producing a `cache/` directory of precompiled PTX that

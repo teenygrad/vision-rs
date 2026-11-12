@@ -21,7 +21,7 @@ cargo doc --open          # Build and open docs locally
 
 First time only: `cp .env.dev .env` and adjust the paths for your machine (`.env` is gitignored;
 `.env.dev` is the tracked example — see README.md's "Installing the toolchain" section for
-where `TEENYC_PATH` comes from).
+where `teenyc` comes from).
 
 ### Build (required before any bench run)
 
@@ -150,9 +150,10 @@ To develop against an unreleased `../teenygrad` checkout, add a temporary `[patc
 
 A custom fork of the Rust compiler (the `teenyc` binary) used to compile GPU kernels ahead-of-time
 and at runtime (see README.md's "Installing the toolchain" section). `vision-rs` does not depend
-on it directly as a crate and the crate itself is built with the stable release compiler; only
-`TEENYC_PATH` (see `.env.dev`) needs to point at a `teenyc` binary, normally installed via
-`cargo teeny install-toolchain` rather than built from a full `../teeny` source checkout. If a GPU
+on it directly as a crate and the crate itself is built with the stable release compiler; the
+`teenyc` binary is normally installed via `cargo teeny install-toolchain` (found automatically
+through teeny-compiler's `find_teenyc`) rather than built from a full `../teeny` source
+checkout; `TEENYC_PATH` (see `.env.dev`) overrides it. If a GPU
 kernel fails to compile with an inexplicable error, the root cause may be in this compiler fork
 rather than in `vision-rs` or `teenygrad`.
 

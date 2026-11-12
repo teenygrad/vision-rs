@@ -39,6 +39,42 @@ async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
 }
 
+const USAGE: &str = "\
+Usage:
+  parking-garage-webapp [ADDRESS]
+
+ADDRESS is the address to serve the frontend on, like 127.0.0.1:3000 (default 0.0.0.0:3000).
+
+Options:
+  -h, --help      Print this help";
+
+/// Parses the webapp's arguments into its listen address, or `None` for `--help`, rejecting
+/// anything else rather than ignoring it.
+fn parse_args(
+    args: impl IntoIterator<Item = String>,
+) -> std::result::Result<Option<SocketAddr>, String> {
+    let mut addr: Option<SocketAddr> = None;
+    for arg in args {
+        match arg.as_str() {
+            "-h" | "--help" => return Ok(None),
+            flag if flag.starts_with('-') => return Err(format!("unknown flag: {flag}")),
+            value => {
+                let parsed = value.parse().map_err(|_| {
+                    format!("invalid address '{value}': expected an address like 127.0.0.1:3000")
+                })?;
+                if let Some(previous) = addr.replace(parsed) {
+                    return Err(format!(
+                        "unexpected argument '{value}': the address is already '{previous}'"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(Some(
+        addr.unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 3000))),
+    ))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv().ok();
@@ -55,11 +91,17 @@ async fn main() -> Result<()> {
 
     tracing_subscriber::fmt::init();
 
-    let addr: SocketAddr = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "0.0.0.0:3000".to_owned())
-        .parse()
-        .context("expected listen address like 127.0.0.1:3000")?;
+    let addr = match parse_args(std::env::args().skip(1)) {
+        Ok(Some(addr)) => addr,
+        Ok(None) => {
+            println!("{USAGE}");
+            return Ok(());
+        }
+        Err(err) => {
+            eprintln!("error: {err}\n\n{USAGE}");
+            std::process::exit(2);
+        }
+    };
 
     let app = Router::new()
         .fallback(index)

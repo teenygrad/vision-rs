@@ -6,7 +6,7 @@ publish = false
 
 [features]
 # Build with `--features cuda` to enable YOLO inference.
-# Requires TEENYC_PATH, TEENYC_CACHE_DIR, and MODELS_CACHE_DIR env vars.
+# Requires MODELS_CACHE_DIR; TEENYC_PATH and TEENYC_CACHE_DIR are optional (see .env.dev).
 cuda = [
     "dep:vision-rs",
     "vision-rs/cuda",
