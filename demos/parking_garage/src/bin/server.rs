@@ -1046,10 +1046,11 @@ fn run_aot(raw_args: &[String]) -> Result<()> {
     use teeny_kernels::graph::TritonLowering;
     use vision_rs::models::yolo::yolo26::{Yolo26Variant, blocks::detect::DetectHead, yolo26};
 
-    /// Matches this demo's own default (`--model ultralytics/yolo26n`, 640×640 — see
-    /// `build_infer_fn`'s variant-from-name-suffix inference and its `main()` call site).
+    /// Matches this demo's own default (`--model ultralytics/yolo26n` at `DEFAULT_IMG_SIZE` — see
+    /// `build_infer_fn`'s variant-from-name-suffix inference and its `main()` call site), so a
+    /// packaged bundle's kernel cache covers the server's default run.
     const NC: usize = 80;
-    const IMG_SIZE: usize = 640;
+    const IMG_SIZE: usize = DEFAULT_IMG_SIZE;
 
     #[derive(Parser)]
     struct AotCli {
@@ -1131,12 +1132,16 @@ Usage:
 Options:
   --port N        Port to serve on (default 3001)
   --model SPEC    Run YOLO inference with this model (needs --features cuda or riscv)
-  --img-size N    Model input size, a multiple of 32 (default 640). Larger sizes find smaller,
-                  more distant cars, at a higher cost per image.
+  --img-size N    Model input size, a multiple of 32 (default 1280). Smaller sizes are faster
+                  but miss more of the small, distant cars.
   -h, --help      Print this help
 
 DATASET_ROOT defaults to $DATASETS_CACHE_DIR/PKLot/PKLot; if it doesn't exist, PKLot (~4.6GB)
 is downloaded into it.";
+
+/// The model's default input size. PKLot frames are 1280×720, and at 640 most of the distant cars
+/// are too small to detect (#10).
+const DEFAULT_IMG_SIZE: usize = 1280;
 
 /// The server's command line, as given (defaults are filled in by `main`).
 struct ServerArgs {
@@ -1158,7 +1163,7 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> std::result::Result<Par
         root: None,
         port: 3001,
         model_spec: None,
-        img_size: 640,
+        img_size: DEFAULT_IMG_SIZE,
     };
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -1444,5 +1449,31 @@ async fn main() -> Result<()> {
             lot.cursor = (lot.cursor + 1) % lot.images.len();
         }
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ParsedArgs, parse_args};
+
+    fn parse(args: &[&str]) -> ParsedArgs {
+        parse_args(args.iter().map(|a| a.to_string())).expect("valid arguments")
+    }
+
+    #[test]
+    fn img_size_defaults_to_1280() {
+        // PKLot frames are 1280x720; at 640 most of the distant cars are too small to detect.
+        let ParsedArgs::Run(args) = parse(&[]) else {
+            panic!("no arguments should run the server");
+        };
+        assert_eq!(args.img_size, 1280);
+    }
+
+    #[test]
+    fn img_size_flag_overrides_the_default() {
+        let ParsedArgs::Run(args) = parse(&["--img-size", "640"]) else {
+            panic!("--img-size 640 should run the server");
+        };
+        assert_eq!(args.img_size, 640);
     }
 }
