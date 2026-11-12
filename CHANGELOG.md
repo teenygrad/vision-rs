@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7](https://github.com/teenygrad/vision-rs/compare/vision-rs-v0.1.6...vision-rs-v0.1.7) - 2026-11-12
+
+### Other
+
+- RISC-V inference is supported; only training and `bench` need CUDA ([#22](https://github.com/teenygrad/vision-rs/pull/22))
+- cross artifacts land in `target/cross/` with cargo-teeny 0.1.4 ([#23](https://github.com/teenygrad/vision-rs/pull/23))
+
 ## [0.1.6](https://github.com/teenygrad/vision-rs/compare/vision-rs-v0.1.5...vision-rs-v0.1.6) - 2026-11-12
 
 ### Added

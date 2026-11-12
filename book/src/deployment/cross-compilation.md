@@ -45,7 +45,8 @@ cargo teeny build --target jetson-orin-nano --no-release
 cargo teeny build --target jetson-orin-nano --cuda-path /usr/local/cuda-12.8/targets/aarch64-linux
 ```
 
-Compiled artifacts land in `target/aarch64-unknown-linux-gnu/release/`.
+Compiled artifacts land in `target/cross/aarch64-unknown-linux-gnu/release/` (cargo-teeny
+0.1.4 and later; earlier versions used `target/aarch64-unknown-linux-gnu/release/`).
 
 ## How it works
 
