@@ -4,18 +4,18 @@ members = ["demos/parking_garage"]
 # Single source of truth for teeny-* versions — members reference these via
 # `{ workspace = true }` instead of repeating the version number.
 [workspace.dependencies]
-teeny-core     = { version = "0.3.0", features = ["std"] }
+teeny-core     = { version = "0.3.1", features = ["std"] }
 # default-features off: teeny-kernels defaults to `cuda`, which would otherwise pull the CUDA
 # toolkit into a `riscv`-only build. The `cuda`/`riscv` features below turn the backend back on.
-teeny-kernels  = { version = "0.3.0", default-features = false }
-teeny-macros   = "0.3.0"
-teeny-triton   = "0.3.0"
-teeny-data     = "0.3.0"
-teeny-cuda     = "0.3.0"
-teeny-compiler = "0.3.0"
-teeny-cli      = "0.3.0"
-teeny-riscv    = "0.3.0"
-teeny-test     = "0.3.0"
+teeny-kernels  = { version = "0.3.1", default-features = false }
+teeny-macros   = "0.3.1"
+teeny-triton   = "0.3.1"
+teeny-data     = "0.3.1"
+teeny-cuda     = "0.3.1"
+teeny-compiler = "0.3.1"
+teeny-cli      = "0.3.1"
+teeny-riscv    = "0.3.1"
+teeny-test     = "0.3.1"
 clap           = { version = "4", features = ["derive"] }
 
 [package]
