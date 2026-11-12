@@ -189,13 +189,19 @@ fn shim(sig: Sig) -> PathBuf {
 
 /// The dlopen-able artifact for a compiled kernel.
 ///
-/// teenyc emits two files. The one named `.o` is despite its extension already an ELF
-/// *shared object* and exports the entry point as a dynamic symbol; the one named `.so`
-/// exports only CRT symbols and is useless to `dlsym`. So the `.o` is what gets opened.
+/// Since teeny 0.3.1 (teenygrad/teenygrad#120) `compile_kernel` returns the linked RISC-V
+/// shared object itself, named `.so`, and that is now the only binary emitted. Earlier
+/// versions named the same file `.o` and left an empty `.so` beside it, so the returned
+/// path had to be rewritten; it is used as given.
 fn shared_object(artifact: &str) -> PathBuf {
-    let obj = PathBuf::from(artifact).with_extension("o");
-    assert!(obj.is_file(), "no kernel object at {}", obj.display());
-    obj
+    let so = PathBuf::from(artifact);
+    assert_eq!(
+        so.extension().and_then(|e| e.to_str()),
+        Some("so"),
+        "expected a .so from compile_kernel, got {artifact}"
+    );
+    assert!(so.is_file(), "no kernel shared object at {}", so.display());
+    so
 }
 
 /// Compiles `kernel` for the K3, then runs it under qemu once per CTA.

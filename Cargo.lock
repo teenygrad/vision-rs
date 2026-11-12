@@ -5632,9 +5632,9 @@ dependencies = [
 
 [[package]]
 name = "teeny-onnx"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba86e01a06d7e19b3292a8d7097c4ea42e3c45c2a82e5b2f68a1f78ead557e82"
+checksum = "4229395483cffb8b92c77eb34079bfec85a9b4202954115e86259723be37b486"
 dependencies = [
  "anyhow",
  "protobuf",

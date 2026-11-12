@@ -43,11 +43,8 @@ use teeny_triton::triton::*;
 ///
 /// Input:  `x_ptr`   — `[B, C, H, W]`
 /// Output: `out_ptr` — `[B, C*9, H, W]`
-// `#[kernel]` requires the `Triton` bound inline on the type parameter, while the
-// `I32Tensor == Tensor<i32>` equality can only be written in the where clause.
-#[allow(clippy::multiple_bound_locations)]
 #[kernel]
-pub fn unfold3x3_forward<T: Triton, D: Float, const BLOCK_W: i32>(
+pub fn unfold3x3_forward<T, D: Float, const BLOCK_W: i32>(
     x_ptr: InPtr<T::Pointer<D>>,
     out_ptr: OutPtr<T::Pointer<D>>,
     C: i32,
@@ -88,9 +85,9 @@ pub fn unfold3x3_forward<T: Triton, D: Float, const BLOCK_W: i32>(
     let pmask = p.lt(sp);
     let zeros = T::zeros::<D>(&[BLOCK_W]);
 
-    let wf = T::full(&[BLOCK_W], D::from_f64(W as f64));
-    let wmax = T::full(&[BLOCK_W], D::from_f64((W - 1) as f64));
-    let hmax = T::full(&[BLOCK_W], D::from_f64((H - 1) as f64));
+    let wf = T::full(&[BLOCK_W], D::from_f64(f64::from(W)));
+    let wmax = T::full(&[BLOCK_W], D::from_f64(f64::from(W - 1)));
+    let hmax = T::full(&[BLOCK_W], D::from_f64(f64::from(H - 1)));
 
     // Decompose the flat position into (row, column) in float.
     let pf = T::cast::<i32, D>(p, None, false);
