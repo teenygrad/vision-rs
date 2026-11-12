@@ -62,6 +62,25 @@
             <span class="text-xs text-slate-400">{{ lots[lot]?.timestamp }}</span>
           </div>
 
+          <!-- Legend (only when the server runs a model) -->
+          <div
+            v-if="lots[lot]?.detections"
+            class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-white/10 px-4 py-2 text-xs text-slate-400"
+          >
+            <span class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 rounded-sm bg-red-500/60"></span>Annotated occupied
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 rounded-sm bg-green-500/60"></span>Annotated free
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 rounded-sm border-2 border-amber-400"></span>Vehicle detected
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 rounded-sm border-2 border-sky-400"></span>Other object
+            </span>
+          </div>
+
           <!-- Image + bounding box overlay -->
           <div class="relative w-full bg-slate-900">
             <canvas :id="`canvas-${lot}`" class="block w-full"></canvas>
@@ -88,6 +107,22 @@
               </p>
             </div>
           </div>
+
+          <!-- What the model made of this image -->
+          <p
+            v-if="lots[lot]?.detections"
+            class="border-t border-white/10 px-4 py-3 text-center text-sm text-slate-300"
+          >
+            Model:
+            <span class="font-semibold text-amber-300">
+              {{ lots[lot].detections.occupied_ids.length }}
+            </span>
+            of {{ lots[lot].total_spaces }} spaces occupied ·
+            {{ vehicleCount(lots[lot].detections) }} vehicle{{
+              vehicleCount(lots[lot].detections) === 1 ? "" : "s"
+            }}
+            detected
+          </p>
         </article>
       </div>
     </div>
@@ -99,6 +134,9 @@
         nextTick,
         ref,
       } from "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js";
+
+      // COCO car, bus, truck: the classes the server counts as parked vehicles.
+      const VEHICLE_CLASSES = new Set([2, 5, 7]);
 
       // Override with ?ws=ws://host:port/api/ws query param if needed.
       const WS_URL =
@@ -167,8 +205,39 @@
                 ctx.lineWidth = 1.5;
                 ctx.strokeRect(x, y, w, h);
               }
+
+              if (snapshot.detections) drawDetections(ctx, canvas, snapshot.detections.boxes);
             };
             img.src = `data:image/jpeg;base64,${snapshot.image_b64}`;
+          }
+
+          // The model's boxes, each labelled with its class and score.
+          function drawDetections(ctx, canvas, boxes) {
+            const fontPx = Math.max(10, Math.round(canvas.width / 90));
+            ctx.font = `${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+            ctx.textBaseline = "top";
+            for (const det of boxes) {
+              const [x, y, w, h] = det.bbox;
+              const color = VEHICLE_CLASSES.has(det.class) ? "#fbbf24" : "#38bdf8";
+              ctx.strokeStyle = color;
+              ctx.lineWidth = 2;
+              ctx.strokeRect(x, y, w, h);
+
+              const text = `${det.label} ${det.score.toFixed(2)}`;
+              const pad = 2;
+              const tw = ctx.measureText(text).width + 2 * pad;
+              const th = fontPx + 2 * pad;
+              // Above the box, unless that would leave the image.
+              const ty = y - th >= 0 ? y - th : y;
+              ctx.fillStyle = color;
+              ctx.fillRect(x, ty, tw, th);
+              ctx.fillStyle = "#0f172a";
+              ctx.fillText(text, x + pad, ty + pad);
+            }
+          }
+
+          function vehicleCount(detections) {
+            return detections.boxes.filter((d) => VEHICLE_CLASSES.has(d.class)).length;
           }
 
           function handleSnapshot(snapshot) {
@@ -208,7 +277,16 @@
 
           connect();
 
-          return { lots, lotOrder, statusDot, statusText, inference, inferenceStats, formatMs };
+          return {
+            lots,
+            lotOrder,
+            statusDot,
+            statusText,
+            inference,
+            inferenceStats,
+            formatMs,
+            vehicleCount,
+          };
         },
       }).mount("#app");
     </script>
