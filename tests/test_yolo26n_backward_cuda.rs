@@ -33,8 +33,8 @@
 //   nodes which compile cleanly.  The backbone/head structure, channel widths,
 //   and all fan-out skip connections are otherwise identical to YOLO26n.
 //
-// Requires TEENYC_PATH (and optionally TEENYC_CACHE_DIR) in the
-// environment. Kernel compilation is cached; first run may be slow.
+// Needs teenyc: the installed teenyc toolchain, or TEENYC_PATH. Kernel compilation is cached
+// (TEENYC_CACHE_DIR, default /tmp/teenyc_cache); first run may be slow.
 
 #[cfg(feature = "cuda")]
 mod cuda {
@@ -163,11 +163,8 @@ mod cuda {
 
         // ── 2. Compile all kernels ────────────────────────────────────────────
 
-        let rustc_path =
-            std::env::var("TEENYC_PATH").expect("TEENYC_PATH must be set to run this test");
-        let cache_dir =
-            std::env::var("TEENYC_CACHE_DIR").unwrap_or_else(|_| "/tmp/teenyc_cache".to_string());
-        let compiler = LlvmCompiler::new(rustc_path, cache_dir)?;
+        let cache_dir = teeny_compiler::compiler::default_cache_dir();
+        let compiler = LlvmCompiler::with_default_teenyc(cache_dir)?;
         let graph_compiler = CudaGraphCompiler::new(compiler);
         let lowering = TritonLowering::new();
         println!("compiling YOLO26n-equivalent model (first run may take several minutes)...");
