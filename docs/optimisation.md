@@ -5,6 +5,10 @@ Model: YOLO26N, FP32, batch=1, 640×640
 Runtime: vision-rs with teenygrad CUDA graphs  
 Date: 2026-05-17
 
+> **Note:** these figures were measured with the fused Conv2d+BN+SiLU kernel. The optimiser
+> currently in use doesn't apply that fusion yet, so today's code is slower: on the same GPU,
+> `bench` gives about 58 ms/img (57.7 ms GPU-only) as of 2026-11-12.
+
 ---
 
 ## Baseline benchmark

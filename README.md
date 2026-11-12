@@ -33,9 +33,10 @@ cp .env.dev .env   # then edit the paths inside for your machine — see below
 
 vision-rs builds against the **stable** Rust compiler, but GPU kernels (Triton/MLIR) are compiled
 — both ahead-of-time (`cargo teeny package`/`aot`) and at runtime via JIT — by a separate, custom
-compiler fork: `teenyc` (see [teenygrad/teeny](https://github.com/teenygrad/teeny)). You need that binary on your machine and
-`TEENYC_PATH` (in `.env`) pointing at it before building/running anything that uses the `cuda`
-feature (on by default).
+compiler fork: `teenyc` (see [teenygrad/teeny](https://github.com/teenygrad/teeny)). You need it installed before building/running
+anything that uses the `cuda` feature (on by default). Installed via `cargo teeny
+install-toolchain` (below), it's found automatically; set `TEENYC_PATH` only to use a different
+`teenyc` binary.
 
 The supported way to get `teenyc` is via [`cargo-teeny`](https://github.com/teenygrad/cargo-teeny),
 which installs a prebuilt release from the spinorml CDN — you do **not** need to clone or build

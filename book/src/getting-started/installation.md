@@ -23,9 +23,8 @@ cp .env.dev .env   # then edit the paths inside for your machine
 
 vision-rs itself builds against **stable** Rust, but its GPU kernels
 (Triton-DSL, compiled to PTX/MLIR) go through a separate, custom compiler
-fork: `teenyc`. You need it on your machine, with `TEENYC_PATH` (set in
-`.env`) pointing at it, before building or running anything that uses the
-`cuda` feature (on by default).
+fork: `teenyc`. You need it installed before building or running anything
+that uses the `cuda` feature (on by default).
 
 The supported way to get it is via
 [`cargo-teeny`](https://github.com/teenygrad/cargo-teeny), which installs a
@@ -45,8 +44,9 @@ rustup toolchain list | grep teeny
 rustup run stable-teenyc-x86_64-unknown-linux-gnu teenyc --version
 ```
 
-`.env.dev` already points `TEENYC_PATH` at the right place once installed
-this way. `source .env` in every shell before building/running/testing —
+Once it's installed this way, vision-rs finds it on its own: `TEENYC_PATH`
+is only needed to use a different `teenyc` binary (or to pick one when
+several `teenyc` toolchains are installed). `source .env` in every shell before building/running/testing —
 the test suite and examples compile kernels via `teenyc` at runtime.
 
 ## Build
