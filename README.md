@@ -213,8 +213,11 @@ cargo teeny package \
 
 The `riscv` feature compiles YOLO26's kernels ahead of time for RISC-V cores with the RVV 1.0
 vector extension, and cross-builds the crate for `riscv64gc-unknown-linux-gnu`. Build it with
-`--no-default-features` to leave out CUDA entirely; no CUDA toolkit is needed. Inference,
-training and benchmarking still need `cuda`, because teenygrad has no RISC-V model runtime yet.
+`--no-default-features` to leave out CUDA entirely; no CUDA toolkit is needed. Inference runs
+on RISC-V too: teeny-test's `RuntimeModel` launches the kernels one at a time, natively on a
+riscv64 board or under qemu-riscv64. The [parking garage demo](demos/parking_garage/README.md)
+uses it on a SpacemiT K3, and `yolo26 validate --runtime runtime` runs COCO validation through
+it. Training and `bench` (which replays a CUDA graph) still need `cuda`.
 
 ```bash
 # Ahead-of-time compile the kernels (on the host) for a SpacemiT K3
