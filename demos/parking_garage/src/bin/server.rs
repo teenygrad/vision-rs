@@ -49,7 +49,9 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use dotenv::dotenv;
 use futures_util::{SinkExt, StreamExt};
 use indicatif::{ProgressBar, ProgressStyle};
-use parking_garage::{InferenceStats, ParkingLotSnapshot, SpaceInfo};
+#[cfg(any(feature = "cuda", feature = "riscv"))]
+use parking_garage::Detection;
+use parking_garage::{Detections, InferenceStats, ParkingLotSnapshot, SpaceInfo};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tokio::net::TcpListener;
@@ -451,9 +453,6 @@ fn parse_timestamp(filename: &str) -> String {
 // `cuda` replays the Anduin-optimised graph as a CUDA graph. `riscv` (without `cuda`) runs the
 // same graph kernel-by-kernel through `teeny_test::model::RuntimeModel`, launching the RISC-V
 // kernels natively when built for a riscv64 board.
-
-#[cfg(any(feature = "cuda", feature = "riscv"))]
-const VEHICLE_CLASSES: &[usize] = &[2, 5, 7]; // COCO: car, bus, truck
 
 // Letterbox-resize image to img_size × img_size, normalise to [0,1], return NCHW f32.
 #[cfg(any(feature = "cuda", feature = "riscv"))]
@@ -1339,8 +1338,17 @@ async fn main() -> Result<()> {
             let total = spaces.len();
             let gt_occ = spaces.iter().filter(|s| s.occupied).count();
 
+            let ws_spaces: Vec<SpaceInfo> = spaces
+                .iter()
+                .map(|s| SpaceInfo {
+                    id: s.id,
+                    bbox: s.bbox,
+                    occupied: s.occupied,
+                })
+                .collect();
+
             // ── Inference (cuda/riscv feature) ─────────────────────────────
-            let inf_info: Option<(usize, f32)>;
+            let inf_info: Option<(Detections, f32)>;
             #[cfg(any(feature = "cuda", feature = "riscv"))]
             {
                 inf_info = if let Some(ref mut infer) = infer_fn {
@@ -1348,29 +1356,31 @@ async fn main() -> Result<()> {
                     match infer(&image_path) {
                         Ok(dets) => {
                             let lat_ms = t0.elapsed().as_secs_f32() * 1000.0;
-                            // Collect vehicle centers in normalised [0,1] coords.
-                            let vehicles: Vec<[f32; 2]> = dets
-                                .iter()
-                                .filter(|(cls, _, _)| VEHICLE_CLASSES.contains(cls))
-                                .map(|(_, _, [cx, cy, _, _])| [*cx, *cy])
-                                .collect();
-                            // Convert normalised centers → pixels using image dimensions.
-                            let (img_w, img_h) = image::load_from_memory(&image_bytes)
-                                .map(|i| (i.width() as f64, i.height() as f64))
-                                .unwrap_or((1280.0, 720.0));
-                            // A space is occupied when any vehicle center falls inside it.
-                            let inf_occ = spaces
-                                .iter()
-                                .filter(|s| {
-                                    let [sx, sy, sw, sh] = s.bbox;
-                                    vehicles.iter().any(|&[cx_n, cy_n]| {
-                                        let cx = cx_n as f64 * img_w;
-                                        let cy = cy_n as f64 * img_h;
-                                        cx >= sx && cx <= sx + sw && cy >= sy && cy <= sy + sh
-                                    })
+                            // The model's boxes are normalised to the image; spaces are in pixels.
+                            let (img_w, img_h) =
+                                image::ImageReader::new(std::io::Cursor::new(&image_bytes))
+                                    .with_guessed_format()
+                                    .ok()
+                                    .and_then(|r| r.into_dimensions().ok())
+                                    .map(|(w, h)| (f64::from(w), f64::from(h)))
+                                    .unwrap_or((1280.0, 720.0));
+                            let boxes = dets
+                                .into_iter()
+                                .map(|(class, score, [cx, cy, w, h])| {
+                                    let (w, h) = (f64::from(w) * img_w, f64::from(h) * img_h);
+                                    Detection {
+                                        class,
+                                        score,
+                                        bbox: [
+                                            f64::from(cx) * img_w - w / 2.0,
+                                            f64::from(cy) * img_h - h / 2.0,
+                                            w,
+                                            h,
+                                        ],
+                                    }
                                 })
-                                .count();
-                            Some((inf_occ, lat_ms))
+                                .collect();
+                            Some((Detections::from_boxes(&ws_spaces, boxes), lat_ms))
                         }
                         Err(e) => {
                             eprintln!("inference error: {e:#}");
@@ -1387,7 +1397,7 @@ async fn main() -> Result<()> {
             }
 
             // ── Log ────────────────────────────────────────────────────────
-            if let Some((inf_occ, lat_ms)) = inf_info {
+            if let Some((ref detections, lat_ms)) = inf_info {
                 let stats = inference_stats.get_or_insert_with(InferenceStats::default);
                 stats.record(f64::from(lat_ms));
                 println!(
@@ -1396,7 +1406,7 @@ async fn main() -> Result<()> {
                     img.filename,
                     gt_occ,
                     total,
-                    inf_occ,
+                    detections.occupied_ids.len(),
                     total,
                     lat_ms,
                     stats.count,
@@ -1415,17 +1425,9 @@ async fn main() -> Result<()> {
                 );
             }
 
-            // ── Build WebSocket payload (ground-truth annotations) ─────────
+            // ── Build WebSocket payload ────────────────────────────────────
             let occupied_ids: Vec<usize> =
                 spaces.iter().filter(|s| s.occupied).map(|s| s.id).collect();
-            let ws_spaces: Vec<SpaceInfo> = spaces
-                .iter()
-                .map(|s| SpaceInfo {
-                    id: s.id,
-                    bbox: s.bbox,
-                    occupied: s.occupied,
-                })
-                .collect();
             let snapshot = ParkingLotSnapshot {
                 lot: lot.name.clone(),
                 timestamp: parse_timestamp(&img.filename),
@@ -1434,6 +1436,7 @@ async fn main() -> Result<()> {
                 occupied_ids,
                 spaces: ws_spaces,
                 inference: inference_stats.clone(),
+                detections: inf_info.map(|(detections, _)| detections),
             };
             let json = serde_json::to_string(&snapshot).expect("serialisation failed");
             let _ = tx.send(json);
