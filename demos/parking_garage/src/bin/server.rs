@@ -440,7 +440,11 @@ fn scan_lots(root: &Path) -> Result<Vec<Lot>> {
 
 // "2012-09-11_15_16_58.jpg" → "2012-09-11T15:16:58Z"
 fn parse_timestamp(filename: &str) -> String {
-    let mut parts = filename.splitn(5, '_');
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
+    let mut parts = stem.splitn(5, '_');
     let date = parts.next().unwrap_or("");
     let hh = parts.next().unwrap_or("00");
     let mm = parts.next().unwrap_or("00");
@@ -1454,7 +1458,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ParsedArgs, parse_args};
+    use super::{ParsedArgs, parse_args, parse_timestamp};
 
     fn parse(args: &[&str]) -> ParsedArgs {
         parse_args(args.iter().map(|a| a.to_string())).expect("valid arguments")
@@ -1475,5 +1479,13 @@ mod tests {
             panic!("--img-size 640 should run the server");
         };
         assert_eq!(args.img_size, 640);
+    }
+
+    #[test]
+    fn timestamp_drops_the_file_extension() {
+        assert_eq!(
+            parse_timestamp("2012-09-11_15_16_58.jpg"),
+            "2012-09-11T15:16:58Z"
+        );
     }
 }
