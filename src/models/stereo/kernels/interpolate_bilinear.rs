@@ -37,10 +37,11 @@
 //!
 //! **Layout**: input `[B, C, IH, IW]`, output `[B, C, OH, OW]`.
 //!
-//! Grid: `B * C * ceil(OH*OW / BLOCK_P)` — lanes cover flattened output positions, so
-//! every quantity is lane-varying. All index arithmetic is done in float and cast once,
-//! because integer `maximum`/`minimum` ICE in teenyc 0.3.0 while the float overloads
-//! are fine. Values stay well under 2^24, so the round trip is exact.
+//! Grid: `B * C * OH * ceil(OW / BLOCK_P)` — one CTA per (instance, output row,
+//! column tile), lanes covering adjacent output columns. Source coordinates and
+//! weights are fractional and stay in float; the floored row and column are cast to
+//! i32 on their own (small, so exact) and clamping and addressing are done in i32, so
+//! no flat offset ever passes through float.
 
 use teeny_core::dtype::{AddOffsets, Comparison, Float, Tensor};
 use teeny_macros::kernel;
@@ -72,33 +73,32 @@ pub fn interpolate_bilinear_forward<T: Triton, D: Float, const BLOCK_P: i32>(
     T::I32Tensor: Tensor<i32, 1>,
     T::I32Tensor: core::ops::Add<i32, Output = T::I32Tensor>,
     T::I32Tensor: core::ops::Mul<i32, Output = T::I32Tensor>,
+    T::I32Tensor: core::ops::Add<T::I32Tensor, Output = T::I32Tensor>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
     T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
     let sp_out = OH * OW;
-    let tiles = T::cdiv(sp_out, BLOCK_P);
+    let tiles = T::cdiv(OW, BLOCK_P);
     let pid = T::program_id(Axis::X);
     let tile = pid % tiles;
     let r1 = pid / tiles;
-    let c = r1 % C;
-    let b = r1 / C;
+    let oy = r1 % OH;
+    let r2 = r1 / OH;
+    let c = r2 % C;
+    let b = r2 / C;
 
-    let p = T::arange(0, BLOCK_P) + tile * BLOCK_P;
-    let pmask = p.lt(sp_out);
+    let ox = T::arange(0, BLOCK_P) + tile * BLOCK_P;
+    let pmask = ox.lt(OW);
     let zeros = T::zeros::<D>(&[BLOCK_P]);
     let ones = T::full(&[BLOCK_P], D::from_f64(1.0));
+    let izero = T::zeros::<i32>(&[BLOCK_P]);
 
-    let owf = T::full(&[BLOCK_P], D::from_f64(OW as f64));
-    let iwf = T::full(&[BLOCK_P], D::from_f64(IW as f64));
     let ihmax = T::full(&[BLOCK_P], D::from_f64((IH - 1) as f64));
     let iwmax = T::full(&[BLOCK_P], D::from_f64((IW - 1) as f64));
 
-    // Flattened output position -> (row, column).
-    let pf = T::cast::<i32, D>(p, None, false);
-    let oyf = T::floor(pf / owf);
-    let oxf = pf - oyf * owf;
-
     // Map into the source image and clamp to the border.
+    let oyf = T::cast::<i32, D>(izero + oy, None, false);
+    let oxf = T::cast::<i32, D>(ox, None, false);
     let sy = oyf * T::full(&[BLOCK_P], D::from_f64(scale_y as f64))
         + T::full(&[BLOCK_P], D::from_f64(offset_y as f64));
     let sx = oxf * T::full(&[BLOCK_P], D::from_f64(scale_x as f64))
@@ -106,19 +106,22 @@ pub fn interpolate_bilinear_forward<T: Triton, D: Float, const BLOCK_P: i32>(
     let sy = T::minimum(T::maximum(sy, zeros), ihmax);
     let sx = T::minimum(T::maximum(sx, zeros), iwmax);
 
-    // Corner taps and interpolation weights.
-    let y0 = T::floor(sy);
-    let x0 = T::floor(sx);
-    let wy = sy - y0;
-    let wx = sx - x0;
-    let y1 = T::minimum(y0 + ones, ihmax);
-    let x1 = T::minimum(x0 + ones, iwmax);
+    // Interpolation weights stay in float; the corner taps move to i32. Coordinates
+    // are below IH/IW, so the cast is exact, and addresses never pass through float.
+    let y0f = T::floor(sy);
+    let x0f = T::floor(sx);
+    let wy = sy - y0f;
+    let wx = sx - x0f;
+    let y0 = T::cast::<D, i32>(y0f, None, false);
+    let x0 = T::cast::<D, i32>(x0f, None, false);
+    let y1 = T::minimum(y0 + 1, izero + (IH - 1));
+    let x1 = T::minimum(x0 + 1, izero + (IW - 1));
 
     let in_plane = (b * C + c) * IH * IW;
-    let i00 = T::cast::<D, i32>(y0 * iwf + x0, None, false);
-    let i01 = T::cast::<D, i32>(y0 * iwf + x1, None, false);
-    let i10 = T::cast::<D, i32>(y1 * iwf + x0, None, false);
-    let i11 = T::cast::<D, i32>(y1 * iwf + x1, None, false);
+    let i00 = y0 * IW + x0;
+    let i01 = y0 * IW + x1;
+    let i10 = y1 * IW + x0;
+    let i11 = y1 * IW + x1;
 
     let v00 = T::load(
         x_ptr.add_offsets(i00 + in_plane),
@@ -166,7 +169,7 @@ pub fn interpolate_bilinear_forward<T: Triton, D: Float, const BLOCK_P: i32>(
     let v = top * (ones - wy) + bot * wy;
 
     T::store(
-        out_ptr.add_offsets(p + ((b * C + c) * sp_out)),
+        out_ptr.add_offsets(ox + ((b * C + c) * sp_out + oy * OW)),
         v,
         Some(pmask),
         &[],

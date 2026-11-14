@@ -32,8 +32,10 @@
 //! row-major within the window, so output channel `c*9 + ky*3 + kx` holds
 //! `x[b, c, y + ky - 1, x + kx - 1]`. That matches `F.unfold`'s channel ordering.
 //!
-//! Grid: `B * C * H * ceil(W / BLOCK_W)` — one CTA per row tile. The nine taps are a
-//! compile-time unrolled loop, so there is no runtime control flow and no reduction.
+//! Grid: `B * C * 9 * H * ceil(W / BLOCK_W)` — one CTA per (instance, tap, row,
+//! column tile). The row is a scalar and lanes cover adjacent columns, so all index
+//! arithmetic is i32 multiply-add: no flat-position decomposition, no float round
+//! trip. There is no runtime control flow and no reduction.
 
 use teeny_core::dtype::{AddOffsets, Comparison, Float, Tensor};
 use teeny_macros::kernel;
@@ -57,60 +59,49 @@ pub fn unfold3x3_forward<T, D: Float, const BLOCK_W: i32>(
     T::I32Tensor: core::ops::Mul<i32, Output = T::I32Tensor>,
     T::I32Tensor: core::ops::Add<T::I32Tensor, Output = T::I32Tensor>,
     T::I32Tensor: Comparison<i32, BoolTensor = T::BoolTensor>,
-    T::Tensor<D>: Comparison<T::Tensor<D>, BoolTensor = T::BoolTensor>,
     T::Pointer<D>: AddOffsets<i32, 1, T::I32Tensor, Output = T::Tensor<T::Pointer<D>>>,
 {
-    // Grid: one CTA per (batch, channel, tap, spatial tile). Lanes cover flattened
-    // spatial positions, so every quantity is lane-varying and the body has the same
-    // shape as the 1-D sampler, whose constructs are known to compile.
-    //
-    // All index maths is done in float and cast once at the end. Clamping in integers
-    // needs integer maximum/minimum, which ICEs in teenyc 0.3.0 ("MLIR cleanup passes
-    // failed"); the float overloads are fine. Values stay well under 2^24, so the
-    // float round trip is exact.
+    // One CTA per (batch, channel, tap, row, column tile). Index arithmetic is i32;
+    // an earlier revision did it in float to dodge an integer maximum/minimum ICE in
+    // teenyc 0.3.0 (since fixed), which is only exact while offsets stay below 2^24.
     let sp = H * W;
-    let tiles = T::cdiv(sp, BLOCK_W);
+    let tiles = T::cdiv(W, BLOCK_W);
     let pid = T::program_id(Axis::X);
     let tile = pid % tiles;
     let r1 = pid / tiles;
-    let tap = r1 % 9;
-    let r2 = r1 / 9;
-    let c = r2 % C;
-    let b = r2 / C;
+    let y = r1 % H;
+    let r2 = r1 / H;
+    let tap = r2 % 9;
+    let r3 = r2 / 9;
+    let c = r3 % C;
+    let b = r3 / C;
 
     let ky = tap / 3;
     let kx = tap % 3;
 
-    let p = T::arange(0, BLOCK_W) + tile * BLOCK_W;
-    let pmask = p.lt(sp);
+    let xs = T::arange(0, BLOCK_W) + tile * BLOCK_W;
+    let xmask = xs.lt(W);
     let zeros = T::zeros::<D>(&[BLOCK_W]);
+    let izero = T::zeros::<i32>(&[BLOCK_W]);
 
-    let wf = T::full(&[BLOCK_W], D::from_f64(f64::from(W)));
-    let wmax = T::full(&[BLOCK_W], D::from_f64(f64::from(W - 1)));
-    let hmax = T::full(&[BLOCK_W], D::from_f64(f64::from(H - 1)));
+    // Source row (scalar, broadcast for range checks) and column for this tap.
+    let yy = izero + (y + ky - 1);
+    let xx = xs + (kx - 1);
 
-    // Decompose the flat position into (row, column) in float.
-    let pf = T::cast::<i32, D>(p, None, false);
-    let yf = T::floor(pf / wf);
-    let xf = pf - yf * wf;
+    let y_lo = yy.ge(0);
+    let y_hi = yy.lt(H);
+    let x_lo = xx.ge(0);
+    let x_hi = xx.lt(W);
 
-    // Offset to this tap.
-    let yyf = yf + T::full(&[BLOCK_W], D::from_f64((ky - 1) as f64));
-    let xxf = xf + T::full(&[BLOCK_W], D::from_f64((kx - 1) as f64));
-
-    let y_lo = yyf.ge(zeros);
-    let y_hi = yyf.le(hmax);
-    let x_lo = xxf.ge(zeros);
-    let x_hi = xxf.le(wmax);
-
-    let yc = T::minimum(T::maximum(yyf, zeros), hmax);
-    let xc = T::minimum(T::maximum(xxf, zeros), wmax);
-    let src = T::cast::<D, i32>(yc * wf + xc, None, false);
+    // Clamp so every load is in bounds; out-of-range taps are zeroed below.
+    let yc = T::maximum(T::minimum(yy, izero + (H - 1)), izero);
+    let xc = T::maximum(T::minimum(xx, izero + (W - 1)), izero);
+    let src = yc * W + xc;
 
     let in_plane = (b * C + c) * sp;
     let v = T::load(
         x_ptr.add_offsets(src + in_plane),
-        Some(pmask),
+        Some(xmask),
         Some(zeros),
         &[],
         None,
@@ -127,9 +118,9 @@ pub fn unfold3x3_forward<T, D: Float, const BLOCK_W: i32>(
 
     let out_plane = ((b * C + c) * 9 + tap) * sp;
     T::store(
-        out_ptr.add_offsets(p + out_plane),
+        out_ptr.add_offsets(xs + (out_plane + y * W)),
         v,
-        Some(pmask),
+        Some(xmask),
         &[],
         None,
         None,

@@ -20,7 +20,7 @@ const B: usize = 2;
 const C: usize = 3;
 const H: usize = 5;
 const W: usize = 7;
-const BLOCK_W: i32 = 8; // H*W = 35 is not a multiple of 8: exercises tiling and the tail mask
+const BLOCK_W: i32 = 4; // W = 7: two column tiles per row, the second partial (tail mask)
 
 fn load(rel: &str) -> Vec<f32> {
     let p = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel);
@@ -56,7 +56,7 @@ fn test_unfold3x3_forward_cuda() -> Result<()> {
     let program = testing::load_program_from_ptx::<Unfold3x3Forward<f32>>(&ptx)?;
 
     // Lanes cover flattened spatial positions; one CTA per (b, c, tap, tile).
-    let tiles = (H * W).div_ceil(BLOCK_W as usize);
+    let tiles = H * W.div_ceil(BLOCK_W as usize);
     device.launch(
         &program,
         &testing::launch_config_with_grid(B * C * 9 * tiles, &program),

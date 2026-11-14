@@ -447,12 +447,12 @@ fn rvv_unfold3x3() {
     const C: usize = 3;
     const H: usize = 5;
     const W: usize = 7;
-    const BLOCK: usize = 8;
+    const BLOCK: usize = 4;
     let mut x = fixture("unfold3x3/x.bin");
     let want = fixture("unfold3x3/expected.bin");
     let mut out = vec![0.0f32; B * C * 9 * H * W];
 
-    let tiles = (H * W).div_ceil(BLOCK);
+    let tiles = H * W.div_ceil(BLOCK);
     run(
         "unfold3x3_forward",
         &Unfold3x3Forward::<f32>::new(BLOCK as i32),
@@ -474,7 +474,7 @@ fn rvv_interpolate_bilinear() {
     const IW: usize = 5;
     const OH: usize = 7;
     const OW: usize = 9;
-    const BLOCK: usize = 16;
+    const BLOCK: usize = 4;
 
     for (align_corners, fx) in [
         (true, "interpolate_bilinear/expected_ac_true.bin"),
@@ -495,7 +495,7 @@ fn rvv_interpolate_bilinear() {
         let (sy, oy) = m(IH, OH);
         let (sx, ox) = m(IW, OW);
 
-        let tiles = (OH * OW).div_ceil(BLOCK);
+        let tiles = OH * OW.div_ceil(BLOCK);
         run(
             "interpolate_bilinear_forward",
             &InterpolateBilinearForward::<f32>::new(BLOCK as i32),

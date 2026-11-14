@@ -25,7 +25,7 @@ const IH: usize = 4;
 const IW: usize = 5;
 const OH: usize = 7;
 const OW: usize = 9;
-const BLOCK_P: i32 = 16; // OH*OW = 63 is not a multiple of 16: exercises the tail mask
+const BLOCK_P: i32 = 4; // OW = 9: three column tiles per row, the last partial (tail mask)
 
 fn load(rel: &str) -> Vec<f32> {
     let p = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel);
@@ -73,7 +73,7 @@ fn run(align_corners: bool, fixture: &str) -> Result<()> {
 
     let (sy, oy) = mapping(IH, OH, align_corners);
     let (sx, ox) = mapping(IW, OW, align_corners);
-    let tiles = (OH * OW).div_ceil(BLOCK_P as usize);
+    let tiles = OH * OW.div_ceil(BLOCK_P as usize);
     device.launch(
         &program,
         &testing::launch_config_with_grid(B * C * tiles, &program),
