@@ -59,7 +59,8 @@ pub fn channel_softmax_forward<T: Triton, D: Float, const BLOCK: i32>(
 
     // teenyc's RISC-V backend panics ("codegen_goto: target bbN not in basic_blocks")
     // when one loop follows another with no real op between them. Each loop's result is
-    // therefore passed through an identity op (`+ 0`, exact) before the next loop.
+    // therefore passed through an identity op (`+ 0`, exact) before the next loop
+    // (teenygrad/teenygrad#156).
     let mut mx = T::full(&[BLOCK], D::from_f64(-3.0e38));
     for c in 0..C {
         let x = T::load(
