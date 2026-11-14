@@ -532,7 +532,7 @@ fn rvv_conv_transpose2d_k4s2p1() {
         &ConvTranspose2dK4s2p1Forward::<f32>::new(4),
         B * COUT * (IH * 2) * (IW * 2),
         &mut [&mut x, &mut w, &mut bias, &mut out],
-        &[CIN as i32, COUT as i32, IH as i32, IW as i32],
+        &[CIN as i32, COUT as i32, IH as i32, IW as i32, 1],
         &[],
     );
     check("conv_transpose2d_k4s2p1", &out, &want, 1e-5);

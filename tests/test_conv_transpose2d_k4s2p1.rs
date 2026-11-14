@@ -79,6 +79,7 @@ fn test_conv_transpose2d_k4s2p1_forward_cuda() -> Result<()> {
             COUT as i32,
             IH as i32,
             IW as i32,
+            1i32,
         ),
     )?;
 

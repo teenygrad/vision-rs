@@ -229,3 +229,19 @@ pub fn interp<D: FloatBytes + Send + Sync + 'static>(x: &SymTensor, dest: &SymTe
         None,
     )
 }
+
+/// `nn.Conv2d(c_in, c_out, k, padding=k // 2, bias=False)`, recorded under `name`.
+pub fn conv_no_bias<D: Float>(
+    name: &'static str,
+    c_in: usize,
+    c_out: usize,
+    k: usize,
+) -> impl Fn(&SymTensor) -> SymTensor {
+    let p = k / 2;
+    let layer =
+        Conv2d::<D, SymTensor, SymTensor, 4>::new(c_in, c_out, (k, k), (1, 1), (p, p), false);
+    move |x: &SymTensor| {
+        let _g = name_scope(name);
+        layer.call(x.clone())
+    }
+}

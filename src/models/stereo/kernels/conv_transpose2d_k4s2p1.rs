@@ -51,6 +51,7 @@ use teeny_triton::triton::*;
 /// Transposed convolution with `kernel_size=4, stride=2, padding=1`.
 ///
 /// Inputs:  `x_ptr` `[B, Cin, IH, IW]`, `w_ptr` `[Cin, Cout, 4, 4]`, `b_ptr` `[Cout]`
+/// (read only when `HAS_BIAS` is 1)
 /// Output:  `out_ptr` `[B, Cout, 2*IH, 2*IW]`
 // `#[kernel]` requires the `Triton` bound inline on the type parameter, while the
 // `I32Tensor == Tensor<i32>` equality can only be written in the where clause.
@@ -66,6 +67,7 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
     COUT: i32,
     IH: i32,
     IW: i32,
+    HAS_BIAS: i32,
 ) where
     T: Triton<I32Tensor = <T as Triton>::Tensor<i32>>,
     T::I32Tensor: Tensor<i32, 1>,
@@ -248,9 +250,12 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
     let xv11 = T::where_(ix11.lt(IW), xv11, zeros);
     let t11 = xv11 * wv11;
 
-    // Single reduction over Cin, then bias.
+    // Single reduction over Cin, then bias. With HAS_BIAS = 0 the caller passes any
+    // valid buffer as `b_ptr` (the graph op passes the weights) and the value is
+    // multiplied by zero, which is exact for finite weights.
     let prod = t00 + t01 + t10 + t11;
     let dot = T::sum(prod, Some(0), false) / T::full(&[1], D::from_f64(1.0));
+    let has_bias = T::cast::<i32, D>(T::zeros::<i32>(&[1]) + HAS_BIAS, None, false);
     let bias = T::load(
         b_ptr.add_offsets(T::arange(0, 1) + co),
         None,
@@ -264,10 +269,147 @@ pub fn conv_transpose2d_k4s2p1_forward<T: Triton, D: Float, const BLOCK_CI: i32>
 
     T::store(
         out_ptr.add_offsets(T::arange(0, 1) + pid),
-        dot + bias,
+        dot + bias * has_bias,
         None,
         &[],
         None,
         None,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Graph-level op
+// ---------------------------------------------------------------------------
+
+use core::marker::PhantomData;
+use std::any::Any;
+use std::sync::Arc;
+use teeny_core::device::program::ArgVisitor;
+use teeny_core::dtype::FloatBytes;
+use teeny_core::graph::{CustomOp, Shape};
+use teeny_core::model::{RawPtr, RuntimeOp};
+
+/// Graph-level `nn.ConvTranspose2d(cin, cout, kernel_size=4, stride=2, padding=1)`.
+///
+/// Input `[B, cin, IH, IW]`, output `[B, cout, 2*IH, 2*IW]`. Weight slots are
+/// `weight` `[cin, cout, 4, 4]` (PyTorch's transposed-conv layout) and, with
+/// `has_bias`, `bias` `[cout]`, so checkpoint tensors load unchanged.
+pub struct ConvTranspose2dK4s2p1Op<D: FloatBytes + Send + Sync + 'static> {
+    /// Input channels.
+    pub cin: usize,
+    /// Output channels.
+    pub cout: usize,
+    /// Whether the layer has a bias.
+    pub has_bias: bool,
+    _phantom: PhantomData<D>,
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> ConvTranspose2dK4s2p1Op<D> {
+    /// Creates the op.
+    pub fn new(cin: usize, cout: usize, has_bias: bool) -> Self {
+        Self {
+            cin,
+            cout,
+            has_bias,
+            _phantom: PhantomData,
+        }
+    }
+
+    /// Channel block: the smallest power of two covering `cin`.
+    fn block_ci(&self) -> i32 {
+        self.cin.next_power_of_two().max(1) as i32
+    }
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> CustomOp for ConvTranspose2dK4s2p1Op<D> {
+    fn name(&self) -> &str {
+        "stereo.conv_transpose2d_k4s2p1"
+    }
+
+    fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
+        let x = input_shapes[0];
+        vec![
+            x[0],
+            Some(self.cout),
+            x[2].map(|h| 2 * h),
+            x[3].map(|w| 2 * w),
+        ]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
+        let kernel = ConvTranspose2dK4s2p1Forward::<D>::new(self.block_ci());
+        Some((
+            "conv_transpose2d_k4s2p1_forward".to_string(),
+            kernel.source,
+            "entry_point".to_string(),
+            Arc::new(ConvTranspose2dK4s2p1RuntimeOp::<D> {
+                cin: self.cin,
+                cout: self.cout,
+                has_bias: self.has_bias,
+                _phantom: PhantomData,
+            }),
+        ))
+    }
+}
+
+/// Runtime dispatch for [`ConvTranspose2dK4s2p1Op`].
+pub struct ConvTranspose2dK4s2p1RuntimeOp<D: FloatBytes + Send + Sync + 'static> {
+    cin: usize,
+    cout: usize,
+    has_bias: bool,
+    _phantom: PhantomData<D>,
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> RuntimeOp for ConvTranspose2dK4s2p1RuntimeOp<D> {
+    fn n_activation_inputs(&self) -> usize {
+        1
+    }
+
+    fn param_shapes(&self, _input_shapes: &[&[usize]], _output_shape: &[usize]) -> Vec<Vec<usize>> {
+        let mut p = vec![vec![self.cin, self.cout, 4, 4]];
+        if self.has_bias {
+            p.push(vec![self.cout]);
+        }
+        p
+    }
+
+    fn param_names(&self) -> &'static [&'static str] {
+        if self.has_bias {
+            &["weight", "bias"]
+        } else {
+            &["weight"]
+        }
+    }
+
+    fn pack_args(
+        &self,
+        inputs: &[(RawPtr, &[usize])],
+        params: &[RawPtr],
+        output: RawPtr,
+        _output_shape: &[usize],
+        _output_row_stride: i32,
+        visitor: &mut dyn ArgVisitor,
+    ) {
+        let x = inputs[0].1;
+        assert_eq!(x[1], self.cin, "conv_transpose2d_k4s2p1: input channels");
+        visitor.visit_ptr(inputs[0].0);
+        visitor.visit_ptr(params[0]);
+        // Without a bias the kernel multiplies the loaded value by zero; any valid
+        // buffer will do, so pass the weights.
+        visitor.visit_ptr(if self.has_bias { params[1] } else { params[0] });
+        visitor.visit_ptr(output);
+        visitor.visit_i32(self.cin as i32);
+        visitor.visit_i32(self.cout as i32);
+        visitor.visit_i32(x[2] as i32);
+        visitor.visit_i32(x[3] as i32);
+        visitor.visit_i32(self.has_bias as i32);
+    }
+
+    fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
+        [output_shape.iter().product::<usize>() as u32, 1, 1]
+    }
 }

@@ -11,6 +11,8 @@ use teeny_riscv::compiler::{
 };
 use vision_rs::models::stereo::kernels::avg_pool2d_padded::AvgPool2dPaddedForward;
 use vision_rs::models::stereo::kernels::bilinear_sampler_1d::BilinearSampler1dForward;
+use vision_rs::models::stereo::kernels::channel_softmax::ChannelSoftmaxForward;
+use vision_rs::models::stereo::kernels::context_upsample::ContextUpsampleForward;
 use vision_rs::models::stereo::kernels::conv_transpose2d_k4s2p1::ConvTranspose2dK4s2p1Forward;
 use vision_rs::models::stereo::kernels::correlation::CorrelationForward;
 use vision_rs::models::stereo::kernels::gated_blend::GatedBlendForward;
@@ -19,6 +21,7 @@ use vision_rs::models::stereo::kernels::geo_lookup::GeoLookupForward;
 use vision_rs::models::stereo::kernels::instance_norm3d::InstanceNorm3dForward;
 use vision_rs::models::stereo::kernels::interpolate_bilinear::InterpolateBilinearForward;
 use vision_rs::models::stereo::kernels::l2_normalize::L2NormalizeForward;
+use vision_rs::models::stereo::kernels::leaky_relu::LeakyReluSlopeForward;
 use vision_rs::models::stereo::kernels::pool_pairs::PoolPairsForward;
 use vision_rs::models::stereo::kernels::scale::ScaleForward;
 use vision_rs::models::stereo::kernels::unfold3x3::Unfold3x3Forward;
@@ -64,6 +67,18 @@ fn test_stereo_kernels_lower_to_rvv() -> Result<(), Box<dyn std::error::Error>> 
     check("scale_forward", &ScaleForward::<f32>::new(256))?;
     check("geo_lookup_forward", &GeoLookupForward::<f32>::new(32))?;
     check("pool_pairs_forward", &PoolPairsForward::<f32>::new(256))?;
+    check(
+        "leaky_relu_slope_forward",
+        &LeakyReluSlopeForward::<f32>::new(256),
+    )?;
+    check(
+        "channel_softmax_forward",
+        &ChannelSoftmaxForward::<f32>::new(256),
+    )?;
+    check(
+        "context_upsample_forward",
+        &ContextUpsampleForward::<f32>::new(32),
+    )?;
     check(
         "instance_norm3d_forward",
         &InstanceNorm3dForward::<f32>::new(64),

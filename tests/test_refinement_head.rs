@@ -26,6 +26,7 @@ use vision_rs::models::stereo::update::{
     motion_encoder::{MotionEncoderDims, basic_motion_encoder},
     refinement::{StepInputs, refinement_step},
     update_block::{UpdateBlockDims, UpdateInputs, basic_selective_multi_update_block},
+    upsample::upsample_disp,
 };
 
 /// `SelectiveConvGRU(hidden 8, input 8 + 8)` on a 6x10 map.
@@ -361,5 +362,26 @@ fn refinement_loop_matches_pytorch() -> anyhow::Result<()> {
         );
     }
     compare("refinement_loop/mask", &mask, &f("expected_mask"), 1e-5);
+    Ok(())
+}
+
+/// `FoundationStereo.upsample_disp` at reduced width (`c` 4 instead of 32): a 6x8
+/// disparity, the mask features and a 12x16 stem map, to a 24x32 disparity. Covers
+/// both transposed convs (with and without bias), LeakyReLU, the channel softmax and
+/// the fused convex upsampling, including its zero-padded border.
+#[test]
+#[serial]
+fn upsample_disp_matches_pytorch() -> anyhow::Result<()> {
+    check_block(
+        "upsample_disp",
+        "upsample_disp",
+        &[
+            ("disp", &[1, 1, 6, 8]),
+            ("mask", &[1, 4, 6, 8]),
+            ("stem", &[1, 4, 12, 16]),
+        ],
+        |i| vec![("", upsample_disp::<f32>(4)(&i[0], &i[1], &i[2]))],
+        1e-5,
+    )?;
     Ok(())
 }
