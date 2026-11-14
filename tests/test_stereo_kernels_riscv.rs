@@ -9,6 +9,7 @@ use teeny_riscv::compiler::{
     compile_kernel,
     target::{Capability, Target},
 };
+use vision_rs::models::stereo::kernels::avg_pool2d_padded::AvgPool2dPaddedForward;
 use vision_rs::models::stereo::kernels::bilinear_sampler_1d::BilinearSampler1dForward;
 use vision_rs::models::stereo::kernels::conv_transpose2d_k4s2p1::ConvTranspose2dK4s2p1Forward;
 use vision_rs::models::stereo::kernels::correlation::CorrelationForward;
@@ -49,6 +50,10 @@ fn test_stereo_kernels_lower_to_rvv() -> Result<(), Box<dyn std::error::Error>> 
         &BilinearSampler1dForward::<f32>::new(16),
     )?;
     check("l2_normalize_forward", &L2NormalizeForward::<f32>::new(16))?;
+    check(
+        "avg_pool2d_padded_forward",
+        &AvgPool2dPaddedForward::<f32>::new(8),
+    )?;
     check(
         "instance_norm3d_forward",
         &InstanceNorm3dForward::<f32>::new(64),

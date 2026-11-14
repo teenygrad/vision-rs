@@ -26,16 +26,18 @@
 //!
 //! With no affine parameters and no running statistics the op has no weights, and at
 //! inference it behaves exactly as in training: statistics always come from the input.
-//! Those are the settings FoundationStereo uses at all five sites
-//! (`core/submodule.py:64` and `:328`).
 //!
 //! **Layout**: `x` is `[B, C, N]` row-major, where `N` flattens every trailing axis
 //! (`D*H*W` for a cost volume). Because the reduction covers all of them, the same
 //! kernel is also exact for `InstanceNorm1d`/`InstanceNorm2d`.
 //!
-//! This is the one 3-D op that FoundationStereo's rank-4 conversion cannot remove:
-//! folding the disparity axis into batch would split each `(b, c)` normalisation set
-//! into `D` separate ones (`core/rank4.py:169`).
+//! In FoundationStereo's shipped configurations this runs as `InstanceNorm2d`
+//! (18 modules, same defaults). Its `InstanceNorm3d` sites (`core/submodule.py:64`,
+//! `:328`) are only built for 3-D layers with `norm='instance'`, which neither
+//! released checkpoint uses: their 3-D layers are normalised with `BatchNorm3d`. Were
+//! one used, this would be the one 3-D op the rank-4 conversion cannot remove, since
+//! folding the disparity axis into batch splits each `(b, c)` normalisation set into
+//! `D` separate ones (`core/rank4.py:169`).
 //!
 //! Grid: `B * C` — one CTA per instance. Each CTA walks its `N` elements in
 //! `BLOCK`-sized chunks three times: once for the mean, once for the variance about

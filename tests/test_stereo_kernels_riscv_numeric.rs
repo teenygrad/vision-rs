@@ -33,10 +33,14 @@ use teeny_riscv::compiler::{
 };
 
 use vision_rs::models::stereo::kernels::{
+    avg_pool2d_padded::{AvgPool2dPaddedForward, pooled_extent},
     bilinear_sampler_1d::BilinearSampler1dForward,
-    conv_transpose2d_k4s2p1::ConvTranspose2dK4s2p1Forward, correlation::CorrelationForward,
-    instance_norm3d::InstanceNorm3dForward, interpolate_bilinear::InterpolateBilinearForward,
-    l2_normalize::L2NormalizeForward, unfold3x3::Unfold3x3Forward,
+    conv_transpose2d_k4s2p1::ConvTranspose2dK4s2p1Forward,
+    correlation::CorrelationForward,
+    instance_norm3d::InstanceNorm3dForward,
+    interpolate_bilinear::InterpolateBilinearForward,
+    l2_normalize::L2NormalizeForward,
+    unfold3x3::Unfold3x3Forward,
 };
 
 // ---------------------------------------------------------------------------
@@ -355,6 +359,40 @@ fn rvv_l2_normalize() {
         &[],
     );
     check("l2_normalize", &out, &want, 1e-6);
+}
+
+#[test]
+fn rvv_avg_pool2d_padded() {
+    dotenv().ok();
+    const B: usize = 2;
+    const C: usize = 3;
+    const IH: usize = 13;
+    const IW: usize = 19;
+    const BLOCK_W: usize = 8;
+    for (k, s, p) in [(3usize, 2usize, 1usize), (5, 4, 1)] {
+        let oh = pooled_extent(IH, k, s, p);
+        let ow = pooled_extent(IW, k, s, p);
+        let mut x = fixture("avg_pool2d_padded/x.bin");
+        let want = fixture(&format!("avg_pool2d_padded/k{k}s{s}p{p}.bin"));
+        let mut out = vec![0.0f32; B * C * oh * ow];
+
+        run(
+            "avg_pool2d_padded_forward",
+            &AvgPool2dPaddedForward::<f32>::new(BLOCK_W as i32),
+            B * C * oh * ow.div_ceil(BLOCK_W),
+            &mut [&mut x, &mut out],
+            &[
+                IH as i32, IW as i32, oh as i32, ow as i32, k as i32, s as i32, p as i32,
+            ],
+            &[],
+        );
+        check(
+            &format!("avg_pool2d_padded k{k}s{s}p{p}"),
+            &out,
+            &want,
+            1e-6,
+        );
+    }
 }
 
 #[test]
