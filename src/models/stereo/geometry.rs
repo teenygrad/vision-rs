@@ -19,7 +19,11 @@
 use teeny_core::dtype::FloatBytes;
 use teeny_core::graph::{CustomData, SymTensor};
 
-use super::kernels::{correlation::CorrelationOp, l2_normalize::L2NormalizeOp};
+use super::kernels::{
+    correlation::CorrelationOp, geo_lookup::GeoLookupOp, l2_normalize::L2NormalizeOp,
+    pool_pairs::PoolPairsOp,
+};
+use super::update::ops::cat;
 
 /// All-pairs cosine correlation volume, as built by FoundationStereo
 /// (`core/geometry.py:74`):
@@ -57,4 +61,71 @@ pub fn correlation_volume<D: FloatBytes + Send + Sync + 'static>(
         &[&n2],
         None,
     )
+}
+
+/// The geometry pyramid of `Combined_Geo_Encoding_Volume.__init__`
+/// (`core/geometry.py`), built once per image pair.
+pub struct GeoPyramid {
+    /// Filtered cost volume per level, `[B, C, D / 2^i, H, W]`.
+    pub geo: Vec<SymTensor>,
+    /// All-pairs correlation per level, `[B, H, W, W2 / 2^i]`.
+    pub corr: Vec<SymTensor>,
+}
+
+/// Builds `levels` pyramid levels from the cost volume `geo` `[B, C, D, H, W]` and the
+/// correlation `corr` `[B, H, W, W2]` (as [`correlation_volume`] returns it). Each level
+/// averages adjacent pairs of the one before along the disparity axis (cost volume) or
+/// the right-image column axis (correlation), as `F.avg_pool2d(x, [1, 2], stride=[1, 2])`
+/// does in PyTorch's permuted layout.
+pub fn geo_pyramid<D: FloatBytes + Send + Sync + 'static>(
+    geo: &SymTensor,
+    corr: &SymTensor,
+    levels: usize,
+) -> GeoPyramid {
+    let mut g = vec![geo.clone()];
+    let mut c = vec![corr.clone()];
+    for _ in 1..levels {
+        let gl = g.last().unwrap().record_custom(
+            CustomData::new(PoolPairsOp::<D>::new(2, 256)),
+            &[],
+            None,
+        );
+        let cl = c.last().unwrap().record_custom(
+            CustomData::new(PoolPairsOp::<D>::new(3, 256)),
+            &[],
+            None,
+        );
+        g.push(gl);
+        c.push(cl);
+    }
+    GeoPyramid { geo: g, corr: c }
+}
+
+/// The per-iteration lookup `Combined_Geo_Encoding_Volume.__call__(disp, coords)`:
+/// every level's cost-volume and correlation samples around the current disparity
+/// `disp` `[B, 1, H, W]`, concatenated to
+/// `[B, levels * (C + 1) * (2 * radius + 1), H, W]` in PyTorch's channel order
+/// (`geo_0, corr_0, geo_1, corr_1, …`). `coords` is the column index, so it is not an
+/// input. With FoundationStereo's `C = 28`, two levels and radius 4 that is 522
+/// channels.
+pub fn geo_lookup<D: FloatBytes + Send + Sync + 'static>(
+    pyramid: &GeoPyramid,
+    disp: &SymTensor,
+    radius: usize,
+) -> SymTensor {
+    let levels: Vec<SymTensor> = pyramid
+        .geo
+        .iter()
+        .zip(&pyramid.corr)
+        .enumerate()
+        .map(|(i, (g, c))| {
+            g.record_custom(
+                CustomData::new(GeoLookupOp::<D>::new(i as u32, radius, 32)),
+                &[c, disp],
+                None,
+            )
+        })
+        .collect();
+    let refs: Vec<&SymTensor> = levels.iter().collect();
+    cat(&refs)
 }

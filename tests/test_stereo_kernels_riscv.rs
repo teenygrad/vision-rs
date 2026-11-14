@@ -15,9 +15,11 @@ use vision_rs::models::stereo::kernels::conv_transpose2d_k4s2p1::ConvTranspose2d
 use vision_rs::models::stereo::kernels::correlation::CorrelationForward;
 use vision_rs::models::stereo::kernels::gated_blend::GatedBlendForward;
 use vision_rs::models::stereo::kernels::gelu_erf::GeluErfForward;
+use vision_rs::models::stereo::kernels::geo_lookup::GeoLookupForward;
 use vision_rs::models::stereo::kernels::instance_norm3d::InstanceNorm3dForward;
 use vision_rs::models::stereo::kernels::interpolate_bilinear::InterpolateBilinearForward;
 use vision_rs::models::stereo::kernels::l2_normalize::L2NormalizeForward;
+use vision_rs::models::stereo::kernels::pool_pairs::PoolPairsForward;
 use vision_rs::models::stereo::kernels::scale::ScaleForward;
 use vision_rs::models::stereo::kernels::unfold3x3::Unfold3x3Forward;
 
@@ -60,6 +62,8 @@ fn test_stereo_kernels_lower_to_rvv() -> Result<(), Box<dyn std::error::Error>> 
     check("gated_blend_forward", &GatedBlendForward::<f32>::new(256))?;
     check("gelu_erf_forward", &GeluErfForward::<f32>::new(256))?;
     check("scale_forward", &ScaleForward::<f32>::new(256))?;
+    check("geo_lookup_forward", &GeoLookupForward::<f32>::new(32))?;
+    check("pool_pairs_forward", &PoolPairsForward::<f32>::new(256))?;
     check(
         "instance_norm3d_forward",
         &InstanceNorm3dForward::<f32>::new(64),
