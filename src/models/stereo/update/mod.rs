@@ -4,5 +4,7 @@
 //! Weights are named after the PyTorch module's `state_dict` keys, relative to the
 //! scope the caller opens, so checkpoint tensors load by name.
 
+pub mod disp_head;
 pub mod gru;
+pub mod motion_encoder;
 pub mod ops;

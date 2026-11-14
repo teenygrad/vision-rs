@@ -18,7 +18,9 @@
 //!
 //! Layer names follow PyTorch's `state_dict` keys: wrap a call in
 //! `name_scope("convz")` and its weight slot is recorded as `convz.weight`, so
-//! checkpoint tensors load by name.
+//! checkpoint tensors load by name. The one exception is a bare `nn.Parameter`
+//! recorded as a layer (`EdgeNextConvEncoder.gamma`); [`torch_key`] maps those slots
+//! back to their `state_dict` key.
 
 use teeny_core::{
     dtype::{Float, FloatBytes},
@@ -31,7 +33,7 @@ use teeny_core::{
     },
 };
 
-use crate::models::stereo::kernels::gated_blend::GatedBlendOp;
+use crate::models::stereo::kernels::{gated_blend::GatedBlendOp, gelu_erf::GeluErfOp};
 
 /// Launch block for the element-wise custom ops built here.
 const BLOCK: i32 = 256;
@@ -146,4 +148,57 @@ pub fn sigmoid<D: Float>(x: SymTensor) -> SymTensor {
 /// Hyperbolic tangent.
 pub fn tanh<D: Float>(x: SymTensor) -> SymTensor {
     Tanh::<D, SymTensor, 4>::new().call(x)
+}
+
+/// Depthwise `nn.Conv2d(c, c, k, padding=k // 2, groups=c)` with bias, under `name`.
+pub fn dwconv<D: Float>(
+    name: &'static str,
+    c: usize,
+    k: usize,
+) -> impl Fn(&SymTensor) -> SymTensor {
+    let p = k / 2;
+    let layer =
+        Conv2d::<D, SymTensor, SymTensor, 4>::new_grouped(c, c, (k, k), (1, 1), (p, p), true, c);
+    move |x: &SymTensor| {
+        let _g = name_scope(name);
+        layer.call(x.clone())
+    }
+}
+
+/// Per-channel scale `x * gamma[c]` for a bare `nn.Parameter` of shape `[C]`.
+///
+/// Recorded as a bias-free depthwise 1x1 conv, which computes exactly one multiply per
+/// element. Its slot is `<name>.weight`; [`torch_key`] maps it back to `<name>`.
+pub fn channel_scale<D: Float>(name: &'static str, c: usize) -> impl Fn(&SymTensor) -> SymTensor {
+    let layer =
+        Conv2d::<D, SymTensor, SymTensor, 4>::new_grouped(c, c, (1, 1), (1, 1), (0, 0), false, c);
+    move |x: &SymTensor| {
+        let _g = name_scope(name);
+        layer.call(x.clone())
+    }
+}
+
+/// Names of bare `nn.Parameter`s recorded through [`channel_scale`].
+const BARE_PARAMS: &[&str] = &["gamma"];
+
+/// The PyTorch `state_dict` key for a graph weight slot.
+///
+/// Identical except for [`channel_scale`] slots: `….gamma.weight` is the parameter
+/// `….gamma`. The data needs no transform: `[C]` and `[C, 1, 1, 1]` are the same
+/// values in the same order. Likewise a `nn.Linear` weight `[out, in]` loads unchanged
+/// into the 1x1 conv that replaces it, `[out, in, 1, 1]`.
+pub fn torch_key(slot: &str) -> String {
+    for p in BARE_PARAMS {
+        if let Some(stem) = slot.strip_suffix(".weight")
+            && (stem == *p || stem.ends_with(&format!(".{p}")))
+        {
+            return stem.to_string();
+        }
+    }
+    slot.to_string()
+}
+
+/// Exact GELU (`nn.GELU()`, erf form). teeny's `Op::Gelu` is the tanh approximation.
+pub fn gelu<D: FloatBytes + Send + Sync + 'static>(x: &SymTensor) -> SymTensor {
+    x.record_custom(CustomData::new(GeluErfOp::<D>::new(BLOCK)), &[], None)
 }

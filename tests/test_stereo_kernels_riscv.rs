@@ -14,6 +14,7 @@ use vision_rs::models::stereo::kernels::bilinear_sampler_1d::BilinearSampler1dFo
 use vision_rs::models::stereo::kernels::conv_transpose2d_k4s2p1::ConvTranspose2dK4s2p1Forward;
 use vision_rs::models::stereo::kernels::correlation::CorrelationForward;
 use vision_rs::models::stereo::kernels::gated_blend::GatedBlendForward;
+use vision_rs::models::stereo::kernels::gelu_erf::GeluErfForward;
 use vision_rs::models::stereo::kernels::instance_norm3d::InstanceNorm3dForward;
 use vision_rs::models::stereo::kernels::interpolate_bilinear::InterpolateBilinearForward;
 use vision_rs::models::stereo::kernels::l2_normalize::L2NormalizeForward;
@@ -56,6 +57,7 @@ fn test_stereo_kernels_lower_to_rvv() -> Result<(), Box<dyn std::error::Error>> 
         &AvgPool2dPaddedForward::<f32>::new(8),
     )?;
     check("gated_blend_forward", &GatedBlendForward::<f32>::new(256))?;
+    check("gelu_erf_forward", &GeluErfForward::<f32>::new(256))?;
     check(
         "instance_norm3d_forward",
         &InstanceNorm3dForward::<f32>::new(64),
