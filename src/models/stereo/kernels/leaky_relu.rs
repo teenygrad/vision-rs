@@ -16,9 +16,9 @@
 
 //! `nn.LeakyReLU(negative_slope)`: `y = x` for `x >= 0`, else `negative_slope * x`.
 //!
-//! teeny-kernels' `leaky_relu_forward` takes the slope as a kernel argument, but its
-//! graph lowering dispatches it with only a dtype and block size, so nothing passes
-//! `Op::LeakyRelu`'s `negative_slope` through. This op carries the slope explicitly.
+//! teeny-kernels has a `leaky_relu_forward` kernel that takes the slope, but no runtime
+//! op for it: a graph using `Op::LeakyRelu` panics `not implemented` in `RuntimeModel`
+//! (teenygrad/teenygrad#158). This op carries the slope explicitly.
 //! FoundationStereo's `BasicConv` uses the default 0.01 (`core/submodule.py`).
 //!
 //! Element-wise over a flat buffer. Grid: `ceil(n / BLOCK)`.

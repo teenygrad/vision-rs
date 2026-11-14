@@ -23,8 +23,9 @@
 //!
 //! teeny-kernels lowers `Op::Gelu` to the tanh approximation
 //! (`0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))`), which differs from the
-//! exact form by up to ~1e-3. FoundationStereo's `EdgeNextConvEncoder` uses the
-//! default exact GELU, so the refinement head records this op instead.
+//! exact form by up to ~5e-4 (teenygrad/teenygrad#157). FoundationStereo's
+//! `EdgeNextConvEncoder` uses the default exact GELU, so the refinement head records
+//! this op instead.
 //!
 //! Element-wise over a flat buffer. Grid: `ceil(n / BLOCK)`.
 
