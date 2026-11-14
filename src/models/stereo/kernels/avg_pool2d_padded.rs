@@ -89,7 +89,9 @@ pub fn avg_pool2d_padded_forward<T: Triton, D: Float, const BLOCK_W: i32>(
 
     // One flat loop over the K*K taps. A nested `for ky { for kx { .. } }` with the
     // accumulator carried through both levels compiles under teenyc but returns
-    // all-zero output (checked on CUDA), so the taps are enumerated as one loop.
+    // wrong output (all zeros on CUDA): the inner loop is lowered to a single
+    // iteration with its index fixed at 0 (teenygrad/teenygrad#155). The taps are
+    // therefore enumerated as one loop.
     let mut acc = T::zeros::<D>(&[BLOCK_W]);
     for t in 0..K * K {
         let ky = t / K;
