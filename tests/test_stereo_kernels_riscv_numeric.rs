@@ -35,8 +35,8 @@ use teeny_riscv::compiler::{
 use vision_rs::models::stereo::kernels::{
     bilinear_sampler_1d::BilinearSampler1dForward,
     conv_transpose2d_k4s2p1::ConvTranspose2dK4s2p1Forward, correlation::CorrelationForward,
-    interpolate_bilinear::InterpolateBilinearForward, l2_normalize::L2NormalizeForward,
-    unfold3x3::Unfold3x3Forward,
+    instance_norm3d::InstanceNorm3dForward, interpolate_bilinear::InterpolateBilinearForward,
+    l2_normalize::L2NormalizeForward, unfold3x3::Unfold3x3Forward,
 };
 
 // ---------------------------------------------------------------------------
@@ -355,6 +355,27 @@ fn rvv_l2_normalize() {
         &[],
     );
     check("l2_normalize", &out, &want, 1e-6);
+}
+
+#[test]
+fn rvv_instance_norm3d() {
+    dotenv().ok();
+    const B: usize = 2;
+    const C: usize = 3;
+    const N: usize = 140;
+    let mut x = fixture("instance_norm3d/x.bin");
+    let want = fixture("instance_norm3d/expected.bin");
+    let mut out = vec![0.0f32; B * C * N];
+
+    run(
+        "instance_norm3d_forward",
+        &InstanceNorm3dForward::<f32>::new(64),
+        B * C,
+        &mut [&mut x, &mut out],
+        &[N as i32],
+        &[],
+    );
+    check("instance_norm3d", &out, &want, 1e-5);
 }
 
 #[test]
