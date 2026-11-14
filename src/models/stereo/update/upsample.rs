@@ -24,35 +24,10 @@ use teeny_core::{
     name_scope::name_scope,
 };
 
-use super::ops::{cat, conv_no_bias};
+use super::ops::{cat, conv_no_bias, conv_t, leaky};
 use crate::models::stereo::kernels::{
     channel_softmax::ChannelSoftmaxOp, context_upsample::ContextUpsampleOp,
-    conv_transpose2d_k4s2p1::ConvTranspose2dK4s2p1Op, leaky_relu::LeakyReluOp,
 };
-
-/// `nn.LeakyReLU()`'s default slope, as `BasicConv` uses it.
-const LEAKY_SLOPE: f32 = 0.01;
-
-fn leaky<D: FloatBytes + Send + Sync + 'static>(x: &SymTensor) -> SymTensor {
-    x.record_custom(
-        CustomData::new(LeakyReluOp::<D>::new(LEAKY_SLOPE, 256)),
-        &[],
-        None,
-    )
-}
-
-fn conv_t<D: FloatBytes + Send + Sync + 'static>(
-    x: &SymTensor,
-    cin: usize,
-    cout: usize,
-    has_bias: bool,
-) -> SymTensor {
-    x.record_custom(
-        CustomData::new(ConvTranspose2dK4s2p1Op::<D>::new(cin, cout, has_bias)),
-        &[],
-        None,
-    )
-}
 
 /// `upsample_disp(disp, mask_feat_4, stem_2x)`:
 ///

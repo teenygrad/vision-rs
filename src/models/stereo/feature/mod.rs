@@ -18,4 +18,5 @@
 //! builders. Weights are named after the PyTorch `state_dict` keys relative to the
 //! caller's scope (`feature` in the full model).
 
+pub mod decoder;
 pub mod edgenext;

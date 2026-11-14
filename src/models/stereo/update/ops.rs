@@ -245,3 +245,31 @@ pub fn conv_no_bias<D: Float>(
         layer.call(x.clone())
     }
 }
+
+/// `nn.LeakyReLU()`'s default slope, as `BasicConv` uses it.
+pub const LEAKY_SLOPE: f32 = 0.01;
+
+/// `nn.LeakyReLU()` (slope 0.01).
+pub fn leaky<D: FloatBytes + Send + Sync + 'static>(x: &SymTensor) -> SymTensor {
+    x.record_custom(
+        CustomData::new(
+            crate::models::stereo::kernels::leaky_relu::LeakyReluOp::<D>::new(LEAKY_SLOPE, 256),
+        ),
+        &[],
+        None,
+    )
+}
+
+/// `nn.ConvTranspose2d(cin, cout, 4, stride=2, padding=1)`, weights under the caller's scope.
+pub fn conv_t<D: FloatBytes + Send + Sync + 'static>(
+    x: &SymTensor,
+    cin: usize,
+    cout: usize,
+    has_bias: bool,
+) -> SymTensor {
+    x.record_custom(
+        CustomData::new(crate::models::stereo::kernels::conv_transpose2d_k4s2p1::ConvTranspose2dK4s2p1Op::<D>::new(cin, cout, has_bias)),
+        &[],
+        None,
+    )
+}
