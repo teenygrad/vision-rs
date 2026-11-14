@@ -9,4 +9,5 @@ pub mod gelu_erf;
 pub mod instance_norm3d;
 pub mod interpolate_bilinear;
 pub mod l2_normalize;
+pub mod scale;
 pub mod unfold3x3;

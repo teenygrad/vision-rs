@@ -177,3 +177,147 @@ pub fn interpolate_bilinear_forward<T: Triton, D: Float, const BLOCK_P: i32>(
         None,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Graph-level op
+// ---------------------------------------------------------------------------
+
+use core::marker::PhantomData;
+use std::any::Any;
+use std::sync::Arc;
+use teeny_core::device::program::ArgVisitor;
+use teeny_core::dtype::FloatBytes;
+use teeny_core::graph::{CustomOp, Shape};
+use teeny_core::model::{RawPtr, RuntimeOp};
+
+/// Source-coordinate mapping `src = dst * scale + offset` for one axis, as
+/// `F.interpolate(mode='bilinear')` defines it.
+pub fn source_mapping(input: usize, output: usize, align_corners: bool) -> (f32, f32) {
+    if align_corners {
+        let scale = if output > 1 {
+            (input as f32 - 1.0) / (output as f32 - 1.0)
+        } else {
+            0.0
+        };
+        (scale, 0.0)
+    } else {
+        let scale = input as f32 / output as f32;
+        (scale, 0.5 * scale - 0.5)
+    }
+}
+
+/// Graph-level `F.interpolate(x, dest.shape[2:], mode='bilinear', align_corners=…)`.
+///
+/// Inputs, in order: `x` `[B, C, IH, IW]`, then `dest`, which is read only for its
+/// spatial size `[.., .., OH, OW]`. This is FoundationStereo's `interp(x, dest)`
+/// (`core/update.py`). Output `[B, C, OH, OW]`.
+pub struct InterpolateBilinearOp<D: FloatBytes + Send + Sync + 'static> {
+    /// `align_corners` as passed to `F.interpolate`.
+    pub align_corners: bool,
+    /// Kernel launch block size along the output column axis.
+    pub block_p: i32,
+    _phantom: PhantomData<D>,
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> InterpolateBilinearOp<D> {
+    /// Creates the op.
+    pub fn new(align_corners: bool, block_p: i32) -> Self {
+        Self {
+            align_corners,
+            block_p,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> CustomOp for InterpolateBilinearOp<D> {
+    fn name(&self) -> &str {
+        "stereo.interpolate_bilinear"
+    }
+
+    fn infer_output_shape(&self, input_shapes: &[&Shape]) -> Shape {
+        let (x, dest) = (input_shapes[0], input_shapes[1]);
+        vec![x[0], x[1], dest[2], dest[3]]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn lower(&self) -> Option<(String, String, String, Arc<dyn RuntimeOp>)> {
+        let kernel = InterpolateBilinearForward::<D>::new(self.block_p);
+        Some((
+            "interpolate_bilinear_forward".to_string(),
+            kernel.source,
+            "entry_point".to_string(),
+            Arc::new(InterpolateBilinearRuntimeOp::<D>::new(
+                self.align_corners,
+                self.block_p,
+            )),
+        ))
+    }
+}
+
+/// Runtime dispatch for [`InterpolateBilinearOp`].
+pub struct InterpolateBilinearRuntimeOp<D: FloatBytes + Send + Sync + 'static> {
+    align_corners: bool,
+    block_p: i32,
+    _phantom: PhantomData<D>,
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> InterpolateBilinearRuntimeOp<D> {
+    /// Creates the runtime op.
+    pub fn new(align_corners: bool, block_p: i32) -> Self {
+        Self {
+            align_corners,
+            block_p,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<D: FloatBytes + Send + Sync + 'static> RuntimeOp for InterpolateBilinearRuntimeOp<D> {
+    fn n_activation_inputs(&self) -> usize {
+        2
+    }
+
+    fn param_shapes(&self, _input_shapes: &[&[usize]], _output_shape: &[usize]) -> Vec<Vec<usize>> {
+        Vec::new()
+    }
+
+    fn pack_args(
+        &self,
+        inputs: &[(RawPtr, &[usize])],
+        _params: &[RawPtr],
+        output: RawPtr,
+        output_shape: &[usize],
+        _output_row_stride: i32,
+        visitor: &mut dyn ArgVisitor,
+    ) {
+        let x = inputs[0].1;
+        let (ih, iw, oh, ow) = (x[2], x[3], output_shape[2], output_shape[3]);
+        let (sy, oy) = source_mapping(ih, oh, self.align_corners);
+        let (sx, ox) = source_mapping(iw, ow, self.align_corners);
+        // `dest` (inputs[1]) is only consulted for its shape.
+        visitor.visit_ptr(inputs[0].0);
+        visitor.visit_ptr(output);
+        visitor.visit_i32(output_shape[1] as i32);
+        visitor.visit_i32(ih as i32);
+        visitor.visit_i32(iw as i32);
+        visitor.visit_i32(oh as i32);
+        visitor.visit_i32(ow as i32);
+        visitor.visit_f32(sy);
+        visitor.visit_f32(oy);
+        visitor.visit_f32(sx);
+        visitor.visit_f32(ox);
+    }
+
+    fn grid(&self, output_shape: &[usize]) -> [u32; 3] {
+        let tiles = output_shape[3].div_ceil(self.block_p as usize);
+        [
+            (output_shape[0] * output_shape[1] * output_shape[2] * tiles) as u32,
+            1,
+            1,
+        ]
+    }
+}

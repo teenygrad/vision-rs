@@ -8,3 +8,4 @@ pub mod disp_head;
 pub mod gru;
 pub mod motion_encoder;
 pub mod ops;
+pub mod update_block;

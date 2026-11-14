@@ -21,6 +21,7 @@ use vision_rs::models::stereo::update::{
     disp_head::disp_head,
     gru::selective_conv_gru,
     motion_encoder::{MotionEncoderDims, basic_motion_encoder},
+    update_block::{UpdateBlockDims, UpdateInputs, basic_selective_multi_update_block},
 };
 
 /// `SelectiveConvGRU(hidden 8, input 8 + 8)` on a 6x10 map.
@@ -37,7 +38,10 @@ fn selective_conv_gru_matches_pytorch() -> anyhow::Result<()> {
             ("x2", [1, 8, 6, 10]),
         ],
         |i| {
-            selective_conv_gru::<f32>(8, 16)(&i[0], &i[1], &[&i[2], &i[3]]);
+            vec![(
+                "",
+                selective_conv_gru::<f32>(8, 16)(&i[0], &i[1], &[&i[2], &i[3]]),
+            )]
         },
         1e-5,
     )?;
@@ -58,9 +62,7 @@ fn basic_motion_encoder_matches_pytorch() -> anyhow::Result<()> {
         "basic_motion_encoder",
         "basic_motion_encoder",
         &[("disp", [1, 1, 6, 10]), ("corr", [1, 18, 6, 10])],
-        |i| {
-            basic_motion_encoder::<f32>(dims)(&i[0], &i[1]);
-        },
+        |i| vec![("", basic_motion_encoder::<f32>(dims)(&i[0], &i[1]))],
         1e-5,
     )?;
     Ok(())
@@ -75,8 +77,62 @@ fn disp_head_matches_pytorch() -> anyhow::Result<()> {
         "disp_head",
         "disp_head",
         &[("x", [1, 8, 9, 11])],
+        |i| vec![("", disp_head::<f32>(8, 1)(&i[0]))],
+        1e-5,
+    )?;
+    Ok(())
+}
+
+/// `BasicSelectiveMultiUpdateBlock(n_gru_layers=3)` at hidden width 8 over a
+/// 12x16 / 6x8 / 3x4 pyramid: all three GRU levels, the motion encoder, `DispHead` and
+/// the mask head in one graph. Checks every output, including the updated 1/4-level
+/// state that also feeds the two heads.
+#[test]
+#[serial]
+fn update_block_matches_pytorch() -> anyhow::Result<()> {
+    let dims = UpdateBlockDims {
+        hidden: 8,
+        motion: MotionEncoderDims {
+            cor_planes: 18,
+            cor: 16,
+            disp: 8,
+            out: 8,
+        },
+        mask_mid: 6,
+        mask_out: 4,
+    };
+    check_block(
+        "update_block",
+        "update_block",
+        &[
+            ("net0", [1, 8, 12, 16]),
+            ("net1", [1, 8, 6, 8]),
+            ("net2", [1, 8, 3, 4]),
+            ("inp0", [1, 8, 12, 16]),
+            ("inp1", [1, 8, 6, 8]),
+            ("inp2", [1, 8, 3, 4]),
+            ("corr", [1, 18, 12, 16]),
+            ("disp", [1, 1, 12, 16]),
+            ("att0", [1, 1, 12, 16]),
+            ("att1", [1, 1, 6, 8]),
+            ("att2", [1, 1, 3, 4]),
+        ],
         |i| {
-            disp_head::<f32>(8, 1)(&i[0]);
+            let out = basic_selective_multi_update_block::<f32>(dims)(&UpdateInputs {
+                net: [&i[0], &i[1], &i[2]],
+                inp: [&i[3], &i[4], &i[5]],
+                corr: &i[6],
+                disp: &i[7],
+                att: [&i[8], &i[9], &i[10]],
+            });
+            let [n0, n1, n2] = out.net;
+            vec![
+                ("net0", n0),
+                ("net1", n1),
+                ("net2", n2),
+                ("mask", out.mask),
+                ("delta_disp", out.delta_disp),
+            ]
         },
         1e-5,
     )?;

@@ -46,12 +46,14 @@ fn weight_keys(dir: &str) -> HashSet<String> {
 }
 
 /// Traces `build` over `inputs` (name, `[B, C, H, W]`), runs it against the fixtures in
-/// `dir`, and asserts the max absolute difference is below `tol`. Returns that maximum.
+/// `dir`, and asserts every named output is within `tol` of PyTorch. `build` returns
+/// the outputs to check; output `name` is compared against `expected_<name>.bin`, or
+/// `expected.bin` for the empty name. Returns the worst max-abs difference.
 pub fn check_block(
     label: &str,
     dir: &str,
     inputs: &[(&str, [usize; 4])],
-    build: impl FnOnce(&[SymTensor]),
+    build: impl FnOnce(&[SymTensor]) -> Vec<(&'static str, SymTensor)>,
     tol: f32,
 ) -> anyhow::Result<f32> {
     dotenv::dotenv().ok();
@@ -63,7 +65,14 @@ pub fn check_block(
     for (_, s) in &inputs[1..] {
         syms.push(input_like(&first, shape(*s)));
     }
-    build(&syms);
+    let outputs = build(&syms);
+
+    // RuntimeModel lowers the graph the same way internally; lowering again here gives
+    // the graph-node -> DAG-node mapping it does not expose, so outputs that feed other
+    // nodes (not just terminals) can be read back.
+    let lowering = TritonLowering::new();
+    let (_, graph_to_dag) =
+        lowering.lower_with_mapping(&graph.borrow(), LoweringMode::Inference)?;
 
     let device = runtime::open()?;
     let target = runtime::default_target(&device)?;
@@ -71,7 +80,7 @@ pub fn check_block(
     let mut model = RuntimeModel::compile(
         &device,
         &graph.borrow(),
-        &TritonLowering::new(),
+        &lowering,
         LoweringMode::Inference,
         &target,
         batch,
@@ -93,39 +102,50 @@ pub fn check_block(
         "{label}: PyTorch weights not loaded into the graph: {remaining:?}"
     );
 
-    let out_idx = *model
-        .terminal_node_indices_sorted_by_size()
-        .last()
-        .expect("graph has an output");
+    let out_idx: Vec<usize> = outputs
+        .iter()
+        .map(|(_, t)| graph_to_dag[t.node_id])
+        .collect();
     let data: Vec<Vec<f32>> = inputs
         .iter()
         .map(|(name, _)| fixture(dir, &format!("{name}.bin")))
         .collect();
     let refs: Vec<&[f32]> = data.iter().map(Vec::as_slice).collect();
-    let out = model.run(&device, &refs, &[out_idx])?.remove(0);
+    let got = model.run(&device, &refs, &out_idx)?;
 
-    let want = fixture(dir, "expected.bin");
-    assert_eq!(out.len(), want.len(), "{label}: output length");
-    let mut max = 0.0f32;
-    let mut worst = 0;
-    for (i, (g, w)) in out.iter().zip(&want).enumerate() {
-        assert!(g.is_finite(), "{label}: non-finite output at {i}");
-        let d = (g - w).abs();
-        if d > max {
-            max = d;
-            worst = i;
+    let mut worst_all = 0.0f32;
+    for ((name, _), out) in outputs.iter().zip(&got) {
+        let file = if name.is_empty() {
+            "expected.bin".to_string()
+        } else {
+            format!("expected_{name}.bin")
+        };
+        let want = fixture(dir, &file);
+        let tag = if name.is_empty() {
+            label.to_string()
+        } else {
+            format!("{label}/{name}")
+        };
+        assert_eq!(out.len(), want.len(), "{tag}: output length");
+        let mut max = 0.0f32;
+        let mut worst = 0;
+        for (i, (g, w)) in out.iter().zip(&want).enumerate() {
+            assert!(g.is_finite(), "{tag}: non-finite output at {i}");
+            let d = (g - w).abs();
+            if d > max {
+                max = d;
+                worst = i;
+            }
         }
+        println!("{tag}: max |{} - torch| = {max:e}", runtime::BACKEND_NAME);
+        assert!(
+            max < tol,
+            "{tag}: max |diff| {max:e} at {worst} (got {} want {})",
+            out[worst],
+            want[worst]
+        );
+        worst_all = worst_all.max(max);
     }
-    println!(
-        "{label}: {} weight slots, max |{} - torch| = {max:e}",
-        slots.len(),
-        runtime::BACKEND_NAME
-    );
-    assert!(
-        max < tol,
-        "{label}: max |diff| {max:e} at {worst} (got {} want {})",
-        out[worst],
-        want[worst]
-    );
-    Ok(max)
+    println!("{label}: {} weight slots loaded", slots.len());
+    Ok(worst_all)
 }

@@ -33,7 +33,10 @@ use teeny_core::{
     },
 };
 
-use crate::models::stereo::kernels::{gated_blend::GatedBlendOp, gelu_erf::GeluErfOp};
+use crate::models::stereo::kernels::{
+    avg_pool2d_padded::AvgPool2dPaddedOp, gated_blend::GatedBlendOp, gelu_erf::GeluErfOp,
+    interpolate_bilinear::InterpolateBilinearOp, scale::ScaleOp,
+};
 
 /// Launch block for the element-wise custom ops built here.
 const BLOCK: i32 = 256;
@@ -201,4 +204,28 @@ pub fn torch_key(slot: &str) -> String {
 /// Exact GELU (`nn.GELU()`, erf form). teeny's `Op::Gelu` is the tanh approximation.
 pub fn gelu<D: FloatBytes + Send + Sync + 'static>(x: &SymTensor) -> SymTensor {
     x.record_custom(CustomData::new(GeluErfOp::<D>::new(BLOCK)), &[], None)
+}
+
+/// `y = factor * x` for a constant `factor`.
+pub fn scale<D: FloatBytes + Send + Sync + 'static>(x: &SymTensor, factor: f32) -> SymTensor {
+    x.record_custom(CustomData::new(ScaleOp::<D>::new(factor, BLOCK)), &[], None)
+}
+
+/// FoundationStereo's `pool2x`: `F.avg_pool2d(x, 3, stride=2, padding=1)`.
+pub fn pool2x<D: FloatBytes + Send + Sync + 'static>(x: &SymTensor) -> SymTensor {
+    x.record_custom(
+        CustomData::new(AvgPool2dPaddedOp::<D>::new(3, 2, 1, 16)),
+        &[],
+        None,
+    )
+}
+
+/// FoundationStereo's `interp(x, dest)`:
+/// `F.interpolate(x, dest.shape[2:], mode='bilinear', align_corners=True)`.
+pub fn interp<D: FloatBytes + Send + Sync + 'static>(x: &SymTensor, dest: &SymTensor) -> SymTensor {
+    x.record_custom(
+        CustomData::new(InterpolateBilinearOp::<D>::new(true, 16)),
+        &[dest],
+        None,
+    )
 }
