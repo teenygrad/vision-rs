@@ -182,7 +182,7 @@ pub fn channel_scale<D: Float>(name: &'static str, c: usize) -> impl Fn(&SymTens
 }
 
 /// Names of bare `nn.Parameter`s recorded through [`channel_scale`].
-const BARE_PARAMS: &[&str] = &["gamma"];
+const BARE_PARAMS: &[&str] = &["gamma", "gamma_xca"];
 
 /// The PyTorch `state_dict` key for a graph weight slot.
 ///
