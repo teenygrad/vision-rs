@@ -138,3 +138,60 @@ fn update_block_matches_pytorch() -> anyhow::Result<()> {
     )?;
     Ok(())
 }
+
+/// The update block at full width with the real `23-51-11` checkpoint weights, on inputs
+/// captured from a forward pass over FoundationStereo's sample stereo pair (iterations
+/// 0 and 8). The reference is the PyTorch block run in FP64 on the CPU: PyTorch on
+/// CUDA defaults to TF32 convolutions, which alone is ~1e-2 off at this width, while
+/// plain FP32 PyTorch lands within ~3e-5 of FP64. The fixtures are ~86 MB per
+/// iteration, so
+/// they live outside the repo: set `FS_REAL_FIXTURES` to the directory holding
+/// `update_block_real_it{0,8}/` and run with `--ignored`.
+#[test]
+#[serial]
+#[ignore = "needs FS_REAL_FIXTURES (real-checkpoint fixtures, not committed)"]
+fn update_block_matches_real_checkpoint() -> anyhow::Result<()> {
+    let root = std::env::var("FS_REAL_FIXTURES")
+        .expect("set FS_REAL_FIXTURES to the real-checkpoint fixture directory");
+    for it in [0, 8] {
+        let dir = format!("{root}/update_block_real_it{it}");
+        let shapes_txt = std::fs::read_to_string(format!("{dir}/shapes.txt"))?;
+        let inputs: Vec<(String, [usize; 4])> = shapes_txt
+            .lines()
+            .map(|l| {
+                let mut f = l.split_whitespace();
+                let name = f.next().unwrap().to_string();
+                let d: Vec<usize> = f.map(|v| v.parse().unwrap()).collect();
+                (name, [d[0], d[1], d[2], d[3]])
+            })
+            .collect();
+        let inputs: Vec<(&str, [usize; 4])> =
+            inputs.iter().map(|(n, s)| (n.as_str(), *s)).collect();
+        check_block(
+            &format!("update_block_real_it{it}"),
+            &dir,
+            &inputs,
+            |i| {
+                let out = basic_selective_multi_update_block::<f32>(
+                    UpdateBlockDims::foundation_stereo(),
+                )(&UpdateInputs {
+                    net: [&i[0], &i[1], &i[2]],
+                    inp: [&i[3], &i[4], &i[5]],
+                    corr: &i[6],
+                    disp: &i[7],
+                    att: [&i[8], &i[9], &i[10]],
+                });
+                let [n0, n1, n2] = out.net;
+                vec![
+                    ("net0", n0),
+                    ("net1", n1),
+                    ("net2", n2),
+                    ("mask", out.mask),
+                    ("delta_disp", out.delta_disp),
+                ]
+            },
+            1e-4,
+        )?;
+    }
+    Ok(())
+}

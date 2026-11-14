@@ -41,10 +41,12 @@ pub struct MotionEncoderDims {
 }
 
 impl MotionEncoderDims {
-    /// The shipped checkpoints: `corr_levels = 2`, `corr_radius = 4`, `ngroup = 8`.
+    /// The shipped checkpoints: `corr_levels = 2`, `corr_radius = 4`, and
+    /// `ngroup = volume_dim = 28` (`core/foundation_stereo.py:140`, not the class's
+    /// default of 8), so `cor_planes = 2 * 9 * 29 = 522`.
     pub fn foundation_stereo() -> Self {
         Self {
-            cor_planes: 2 * (2 * 4 + 1) * (8 + 1),
+            cor_planes: 2 * (2 * 4 + 1) * (28 + 1),
             cor: 256,
             disp: 64,
             out: 128,

@@ -20,8 +20,14 @@ use teeny_kernels::graph::TritonLowering;
 use teeny_test::model::{RuntimeModel, runtime};
 use vision_rs::models::stereo::update::ops::{input_like, torch_key};
 
+/// `dir` is relative to `tests/fixtures/`, or an absolute path for fixtures kept
+/// outside the repository (e.g. ones built from a real checkpoint).
 fn fixture_dir(dir: &str) -> String {
-    format!("{}/tests/fixtures/{dir}", env!("CARGO_MANIFEST_DIR"))
+    if dir.starts_with('/') {
+        dir.to_string()
+    } else {
+        format!("{}/tests/fixtures/{dir}", env!("CARGO_MANIFEST_DIR"))
+    }
 }
 
 pub fn fixture(dir: &str, file: &str) -> Vec<f32> {
@@ -137,7 +143,12 @@ pub fn check_block(
                 worst = i;
             }
         }
-        println!("{tag}: max |{} - torch| = {max:e}", runtime::BACKEND_NAME);
+        let scale = want.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        println!(
+            "{tag}: max |{} - torch| = {max:e} (max |torch| {scale:.3}, relative {:e})",
+            runtime::BACKEND_NAME,
+            max / scale.max(f32::MIN_POSITIVE)
+        );
         assert!(
             max < tol,
             "{tag}: max |diff| {max:e} at {worst} (got {} want {})",
