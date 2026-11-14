@@ -115,14 +115,15 @@ pub fn correlation_forward<T: Triton, D: Float, const BLOCK_C: i32>(
             None,
             false,
         );
-        // Reduce to a 1-element tensor and store that. Storing a broadcast
-        // (keepdim) reduction under a lane-0 mask instead triggers an ICE in
-        // teenyc 0.3.0: "MLIR cleanup passes failed: CodegenFailed".
-        let dot = T::sum(f1 * f2, Some(0), false) / T::full(&[1], D::from_f64(1.0));
+        // Keepdim reduction, broadcast across the channel lanes and written by
+        // lane 0 only. (teenyc 0.3.0 ICEd on this form, teenygrad/teenygrad#119;
+        // the branch reduced to a 1-element tensor and stored it unmasked until
+        // that was fixed.)
+        let dot = T::sum(f1 * f2, Some(0), true);
         T::store(
-            out_ptr.add_offsets(T::arange(0, 1) + (out_base + h)),
+            out_ptr.add_offsets(c_offs + (out_base + h)),
             dot,
-            None,
+            Some(c_offs.lt(1)),
             &[],
             None,
             None,
