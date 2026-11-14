@@ -67,6 +67,7 @@ pub fn gelu_erf_forward<T: Triton, D: Float, const BLOCK: i32>(
     let half = T::full(&[BLOCK], D::from_f64(0.5));
     let one = T::full(&[BLOCK], D::from_f64(1.0));
     // 1/sqrt(2) as a literal: teenyc's generated kernel core has no `core::f64::consts`.
+    #[allow(clippy::approx_constant)]
     let inv_sqrt2 = T::full(&[BLOCK], D::from_f64(0.7071067811865476));
     let y = half * x * (one + T::erf(x * inv_sqrt2));
 

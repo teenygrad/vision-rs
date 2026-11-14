@@ -9,5 +9,6 @@ pub mod gru;
 pub mod motion_encoder;
 pub mod ops;
 pub mod refinement;
+pub mod refinement_loop;
 pub mod update_block;
 pub mod upsample;

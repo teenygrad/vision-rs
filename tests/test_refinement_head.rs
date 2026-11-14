@@ -17,14 +17,12 @@ mod common;
 
 use common::stereo_block::{Block, check_block, compare, fixture};
 use serial_test::serial;
-use vision_rs::models::stereo::geometry::{
-    GeoPyramid, correlation_volume, geo_lookup, geo_pyramid,
-};
+use vision_rs::models::stereo::geometry::{correlation_volume, geo_lookup, geo_pyramid};
 use vision_rs::models::stereo::update::{
     disp_head::disp_head,
     gru::selective_conv_gru,
     motion_encoder::{MotionEncoderDims, basic_motion_encoder},
-    refinement::{StepInputs, refinement_step},
+    refinement_loop::{LoopFixed, LoopState, StepShape, build_step, run_refinement, step_inputs},
     update_block::{UpdateBlockDims, UpdateInputs, basic_selective_multi_update_block},
     upsample::upsample_disp,
 };
@@ -283,77 +281,55 @@ fn refinement_loop_matches_pytorch() -> anyhow::Result<()> {
         mask_mid: 6,
         mask_out: 4,
     };
-    let mut step = Block::new(
-        &device,
-        "refinement_loop/step",
-        DIR,
-        &[
-            ("net0", &[1, 8, 12, 16]),
-            ("net1", &[1, 8, 6, 8]),
-            ("net2", &[1, 8, 3, 4]),
-            ("inp0", &[1, 8, 12, 16]),
-            ("inp1", &[1, 8, 6, 8]),
-            ("inp2", &[1, 8, 3, 4]),
-            ("att0", &[1, 1, 12, 16]),
-            ("att1", &[1, 1, 6, 8]),
-            ("att2", &[1, 1, 3, 4]),
-            ("geo0", &[1, 3, 12, 12, 16]),
-            ("geo1", &[1, 3, 6, 12, 16]),
-            ("corr0", &[1, 12, 16, 16]),
-            ("corr1", &[1, 12, 16, 8]),
-            ("disp", &[1, 1, 12, 16]),
-        ],
-        |i| {
-            let pyramid = GeoPyramid {
-                geo: vec![i[9].clone(), i[10].clone()],
-                corr: vec![i[11].clone(), i[12].clone()],
-            };
-            let out = refinement_step::<f32>(dims, 2)(&StepInputs {
-                net: [&i[0], &i[1], &i[2]],
-                inp: [&i[3], &i[4], &i[5]],
-                att: [&i[6], &i[7], &i[8]],
-                pyramid: &pyramid,
-                disp: &i[13],
-            });
-            let [n0, n1, n2] = out.net;
-            vec![
-                ("net0", n0),
-                ("net1", n1),
-                ("net2", n2),
-                ("mask", out.mask),
-                ("disp", out.disp),
-            ]
-        },
-    )?;
+    let shape = StepShape {
+        batch: 1,
+        h: 12,
+        w: 16,
+        groups: 3,
+        disps: 12,
+        w2: 16,
+        levels: 2,
+    };
+    let names = step_inputs(&dims, &shape);
+    let inputs: Vec<(&str, &[usize])> = names
+        .iter()
+        .map(|(n, s)| (n.as_str(), s.as_slice()))
+        .collect();
+    let mut step = Block::new(&device, "refinement_loop/step", DIR, &inputs, |i| {
+        build_step::<f32>(dims, 2, shape.levels, i)
+    })?;
 
     let (inp, att) = (
         [f("inp0"), f("inp1"), f("inp2")],
         [f("att0"), f("att1"), f("att2")],
     );
-    let mut net = vec![f("net0"), f("net1"), f("net2")];
-    let mut disp = f("disp");
-    let mut mask = Vec::new();
-    for it in 0..ITERS {
-        let out = step.run(&[
-            &net[0], &net[1], &net[2], &inp[0], &inp[1], &inp[2], &att[0], &att[1], &att[2], &geo0,
-            geo1, corr0, corr1, &disp,
-        ])?;
-        let mut out = out.into_iter();
-        net = vec![
-            out.next().unwrap(),
-            out.next().unwrap(),
-            out.next().unwrap(),
-        ];
-        mask = out.next().unwrap();
-        disp = out.next().unwrap();
-        compare(
-            &format!("refinement_loop/disp_it{it}"),
-            &disp,
-            &f(&format!("expected_disp_it{it}")),
-            1e-5,
-        );
-    }
-    for (n, got) in ["net0", "net1", "net2"].iter().zip(&net) {
+    let fixed = LoopFixed {
+        inp: [&inp[0], &inp[1], &inp[2]],
+        att: [&att[0], &att[1], &att[2]],
+        geo: &[&geo0, geo1],
+        corr: &[corr0, corr1],
+    };
+    let state = LoopState {
+        net: [f("net0"), f("net1"), f("net2")],
+        disp: f("disp"),
+        mask: Vec::new(),
+    };
+    let state = run_refinement(
+        ITERS,
+        &fixed,
+        state,
+        |feed| step.run(feed),
+        |it, s| {
+            compare(
+                &format!("refinement_loop/disp_it{it}"),
+                &s.disp,
+                &f(&format!("expected_disp_it{it}")),
+                1e-5,
+            );
+        },
+    )?;
+    let (net, mask) = (&state.net, &state.mask);
+    for (n, got) in ["net0", "net1", "net2"].iter().zip(net) {
         compare(
             &format!("refinement_loop/{n}"),
             got,
@@ -361,7 +337,7 @@ fn refinement_loop_matches_pytorch() -> anyhow::Result<()> {
             1e-5,
         );
     }
-    compare("refinement_loop/mask", &mask, &f("expected_mask"), 1e-5);
+    compare("refinement_loop/mask", mask, &f("expected_mask"), 1e-5);
     Ok(())
 }
 
