@@ -15,6 +15,7 @@ teeny-cuda     = "0.3.1"
 teeny-compiler = "0.3.1"
 teeny-cli      = "0.3.1"
 teeny-riscv    = "0.3.1"
+teeny-onnx     = "0.3.1"
 teeny-test     = "0.3.1"
 clap           = { version = "4", features = ["derive"] }
 
@@ -71,6 +72,7 @@ teeny-cli      = { workspace = true, optional = true }
 anyhow         = { version = "1.0", default-features = false }
 
 [dev-dependencies]
+teeny-onnx     = { workspace = true }
 # CUDA test helpers (`teeny_test::cuda`, formerly `teeny_cuda::testing`). Its `cuda` feature is
 # enabled by this crate's `cuda` feature so `--no-default-features` tests need no CUDA toolkit.
 teeny-test     = { workspace = true }
